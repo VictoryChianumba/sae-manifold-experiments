@@ -309,6 +309,39 @@ def label_r2(Ztr, ytr, Zte, yte):
     return float(lin), float(kn)
 
 
+# Cyclic labels: linear R^2 on the raw value understates a coordinate that tracks
+# a wrap-around concept (hue 0.99 and 0.01 are both red).  Score these by
+# regressing the representation onto (cos, sin) of the angle instead.
+CYCLIC_LABEL = {"colors": 1.0}  # primary label 'hue' has period 1.0
+
+
+def _circular_targets(y, period):
+    theta = 2 * np.pi * y / period
+    return np.column_stack([np.cos(theta), np.sin(theta)])
+
+
+def label_score(Ztr, ytr, Zte, yte, manifold):
+    """Held-out label decodability, cyclic-aware for wrap-around labels.
+
+    Non-cyclic manifolds: linear / kNN R^2 on the raw label (== label_r2).
+    Cyclic manifolds (CYCLIC_LABEL): multi-output R^2 predicting (cos, sin) of
+    the angle, so a coordinate that parameterises the loop scores high even
+    though the raw label wraps.  Same regressor for every condition.
+    """
+    period = CYCLIC_LABEL.get(manifold)
+    if period is None:
+        return label_r2(Ztr, ytr, Zte, yte)
+    ok_tr = ~np.isnan(ytr); ok_te = ~np.isnan(yte)
+    if ok_tr.sum() < 5 or ok_te.sum() < 3:
+        return np.nan, np.nan
+    Ttr = _circular_targets(ytr[ok_tr], period)
+    Tte = _circular_targets(yte[ok_te], period)
+    Ztr, Zte = Ztr[ok_tr], Zte[ok_te]
+    lin = LinearRegression().fit(Ztr, Ttr).score(Zte, Tte)
+    kn = KNeighborsRegressor(n_neighbors=min(10, len(Ztr))).fit(Ztr, Ttr).score(Zte, Tte)
+    return float(lin), float(kn)
+
+
 def _subspace_rep(Xtr, Xte, mean_m, basis):
     """Project onto an orthonormal basis -> N-dim scores for label decoding."""
     return (Xtr - mean_m) @ basis.T, (Xte - mean_m) @ basis.T
@@ -388,7 +421,7 @@ def run(manifolds, seeds, coord_dims, maxN, c4_sae_path, headline_N):
             ]:
                 B = basis_fn()
                 Ztr, Zte = _subspace_rep(Xtr, Xte, mean_m, B)
-                add(lab, (name, method, headline_N), label_r2(Ztr, ytr, Zte, yte))
+                add(lab, (name, method, headline_N), label_score(Ztr, ytr, Zte, yte, name))
 
             # Factored conditions.
             for cd in coord_dims:
@@ -399,7 +432,7 @@ def run(manifolds, seeds, coord_dims, maxN, c4_sae_path, headline_N):
                     add(ve, (name, method, cd), fve)
                     if cd == headline_N:
                         add(lab, (name, method, cd),
-                            label_r2(Ztr, ytr, Zte, yte))
+                            label_score(Ztr, ytr, Zte, yte, name))
 
     _report(manifolds, ve, lab, coord_dims, headline_N, seeds)
     _save(ve, lab, seeds, coord_dims, headline_N)
@@ -439,7 +472,8 @@ def _report(manifolds, ve, lab, coord_dims, N, seeds):
         pc, _ = _ms(ve.get((n, "pca", N), []))
         print(f"  {n:12} nl−lin={nl-ln:+.3f}   nl−PCA={nl-pc:+.3f}")
 
-    print(f"\n{'='*78}\nSECONDARY: held-out label R² at N={N} (linear / kNN)\n{'='*78}")
+    print(f"\n{'='*78}\nSECONDARY: held-out label R² at N={N} (linear / kNN)"
+          f"  [colors = cyclic cos/sin R²]\n{'='*78}")
     print(f"{'method':22}" + "".join(f"{n[:9]:>13}" for n in names))
     for m in ["pca", "sae_c4_geo", "sae_mix_geo", "factored_lin", "factored_nl"]:
         row = f"{label[m]:22}"

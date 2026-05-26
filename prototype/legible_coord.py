@@ -37,13 +37,16 @@ from sklearn.decomposition import PCA
 
 from data import load_manifold_data, CACHE_DIR
 from factored_sae import FactoredSAE, PRIMARY_LABEL
-from fair_comparison import (load_split, factored_eval, label_r2, _ms, _pca_basis,
-                             _subspace_rep)
+from fair_comparison import (load_split, factored_eval, label_score, _ms,
+                             _pca_basis, _subspace_rep)
 
 RESULTS_DIR = CACHE_DIR / "legible_coord"
 DEFAULT_MANIFOLDS = ["years", "age", "temperature", "colors", "geography"]
-# Labels that wrap around — linear R^2 understates these regardless of legibility,
-# so they are excluded from the "legibility-targeted" average (reported separately).
+# Cyclic-label manifolds are now scored cyclically (cos/sin of the angle, via
+# fair_comparison.label_score) so their R^2 is honest.  They are still kept out
+# of the "legibility-targeted" mean*, because the alignment term here is a LINEAR
+# probe on the raw label and cannot orient a wrap-around coordinate — making them
+# cyclically legible would need a cyclic alignment term (a further step).
 CYCLIC = {"colors"}  # hue wraps
 
 
@@ -137,7 +140,7 @@ def run(manifolds, seeds, lams, coord_dim, headline_N):
             d = per[name]
             B = _pca_basis(d["Xtr"], d["mean_m"], headline_N)
             Ztr, Zte = _subspace_rep(d["Xtr"], d["Xte"], d["mean_m"], B)
-            add(pca_r2, name, label_r2(Ztr, d["ytr"], Zte, d["yte"])[0])
+            add(pca_r2, name, label_score(Ztr, d["ytr"], Zte, d["yte"], name)[0])
 
         for lam in lams:
             print(f"  training nonlinear factored, lam_label={lam}...")
@@ -147,7 +150,7 @@ def run(manifolds, seeds, lams, coord_dim, headline_N):
                 d = per[name]
                 fve, Ztr, Zte, _ = factored_eval(
                     model, norm, d["Xtr"], d["Xte"], d["mean_m"])
-                lin, knn = label_r2(Ztr, d["ytr"], Zte, d["yte"])
+                lin, knn = label_score(Ztr, d["ytr"], Zte, d["yte"], name)
                 add(ve, (lam, name), fve)
                 add(r2lin, (lam, name), lin)
                 add(r2knn, (lam, name), knn)
@@ -185,8 +188,8 @@ def _report(manifolds, lams, ve, r2lin, r2knn, pca_r2, cd, N, seeds):
         leg_mean = np.mean([_ms(r2lin[(lam, m)])[0] for m in legible])
         print(f"{lam:>6}" + "".join(f"{v:>11.2f}" for v in row)
               + f"{leg_mean:>9.2f}")
-    print("  (mean* = mean over non-cyclic labeled manifolds; "
-          f"excludes {sorted(CYCLIC)})")
+    print("  (colors = cyclic cos/sin R²; mean* = mean over non-cyclic labeled "
+          f"manifolds, excludes {sorted(CYCLIC)} — its alignment probe is linear)")
 
 
 def _save(lams, ve, r2lin, r2knn, pca_r2, seeds, cd, N):

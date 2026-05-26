@@ -185,13 +185,44 @@ Honest caveats (see `pareto.png`):
   concept" setting, not unsupervised discovery — be clear about which claim is made.
 - **`age` stays weak** (VE ≈ 0.29, and it degrades at high `lam`): 69 train points
   is too few for the MLP, so alignment and reconstruction fight over scarce data.
-- **`colors` (cyclic hue) stays illegible under linear R²** — the documented
-  wraparound artifact; needs cyclic-aware scoring, not more alignment.
+- **`colors` is a genuine miss** — see the cyclic-scoring section below.
+
+## Cyclic-aware scoring for colors (`fair_comparison.label_score`)
+
+Colours are labelled by **hue**, which wraps (0.99 and 0.01 are both red), so
+linear R² on the raw value unfairly scored every method ≈0 — penalising a
+coordinate that correctly parameterises the colour *loop*. `label_score`
+(`CYCLIC_LABEL = {"colors": 1.0}`) instead regresses the N-dim representation onto
+`(cos θ, sin θ)` of the hue angle and reports multi-output R² (same linear + kNN
+regressors as everything else); non-cyclic manifolds are unchanged. Both
+experiments now use it.
+
+Re-scored, colours rise off the floor but the story is **honest and unflattering to
+the factored model**:
+
+| method (held-out N=3) | colors raw-linear R² (old) | colors cyclic R² (new) |
+|---|---|---|
+| PCA | −0.01 | **0.30** |
+| SAE-mix geometric | −0.01 | 0.29 |
+| Factored NONLINEAR (unsup., lam=0) | −0.00 | 0.13 |
+
+And across the legibility sweep the linear-alignment term barely moves it
+(0.13 → 0.13 → 0.15 → 0.17 → 0.34 as `lam` 0→10) — it only nudges up at `lam = 10`,
+exactly where VE erodes. So:
+
+- Cyclic scoring confirms there *is* recoverable circular structure (PCA gets 0.30),
+  and the earlier ≈0 was a scoring artifact — but it does **not** rescue the
+  factored coordinate. Under the *linear* alignment probe the curved coordinate
+  stays at ~0.13–0.17, **below PCA** — the one labelled manifold where the factored
+  approach loses on legibility even when scored fairly.
+- The reason is mechanical: a linear probe `w·z + b` cannot orient a coordinate onto
+  a circle. Making colours legible needs a **cyclic alignment term** (align to
+  `cos/sin`), not just cyclic scoring — that is the open item, not a quick fix.
 
 ## Possible next steps
 
-- **Cyclic-aware coordinate scoring** (predict sin/cos) so colors/days aren't
-  unfairly scored ≈0 by linear R².
+- **Cyclic-aware *alignment*** (align the coordinate to `cos/sin`, not just score it
+  that way) — the missing piece for colours; scoring alone left it below PCA.
 - **Unsupervised legibility**: replace the label prior with an isometry/arc-length
   penalty and see if a *label-free* coordinate lands near the `lam ≈ 1` point.
 - A **causal/steering** leg: move along a (now-legible) chart coordinate → smooth

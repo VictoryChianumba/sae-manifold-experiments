@@ -185,44 +185,50 @@ Honest caveats (see `pareto.png`):
   concept" setting, not unsupervised discovery — be clear about which claim is made.
 - **`age` stays weak** (VE ≈ 0.29, and it degrades at high `lam`): 69 train points
   is too few for the MLP, so alignment and reconstruction fight over scarce data.
-- **`colors` is a genuine miss** — see the cyclic-scoring section below.
+- **`colors` needs cyclic handling** — resolved in the section below.
 
-## Cyclic-aware scoring for colors (`fair_comparison.label_score`)
+## Cyclic-aware scoring AND alignment for colors
 
-Colours are labelled by **hue**, which wraps (0.99 and 0.01 are both red), so
-linear R² on the raw value unfairly scored every method ≈0 — penalising a
-coordinate that correctly parameterises the colour *loop*. `label_score`
-(`CYCLIC_LABEL = {"colors": 1.0}`) instead regresses the N-dim representation onto
-`(cos θ, sin θ)` of the hue angle and reports multi-output R² (same linear + kNN
-regressors as everything else); non-cyclic manifolds are unchanged. Both
-experiments now use it.
+Colours are labelled by **hue**, which wraps (0.99 and 0.01 are both red), so a
+*line* is the wrong target — both the scoring and the alignment have to know about
+the loop.
 
-Re-scored, colours rise off the floor but the story is **honest and unflattering to
-the factored model**:
+**Scoring** (`fair_comparison.label_score`, `CYCLIC_LABEL = {"colors": 1.0}`):
+regress the N-dim representation onto `(cos θ, sin θ)` of the hue angle, multi-output
+R², same linear + kNN regressors; non-cyclic manifolds unchanged. This alone showed
+the earlier ≈0 was a *scoring* artifact — PCA actually recovers 0.30 of the hue
+circle — but did **not** rescue the factored coordinate.
 
-| method (held-out N=3) | colors raw-linear R² (old) | colors cyclic R² (new) |
-|---|---|---|
-| PCA | −0.01 | **0.30** |
-| SAE-mix geometric | −0.01 | 0.29 |
-| Factored NONLINEAR (unsup., lam=0) | −0.00 | 0.13 |
+**Alignment** (`legible_coord.train_factored_legible`): the per-manifold probe now
+targets a *concept-shaped* quantity — a standardized scalar for non-cyclic labels,
+but `(cos θ, sin θ)` for cyclic ones (a 2-output probe). A linear probe `w·z + b`
+cannot orient a coordinate onto a circle; a `cos/sin` target can.
 
-And across the legibility sweep the linear-alignment term barely moves it
-(0.13 → 0.13 → 0.15 → 0.17 → 0.34 as `lam` 0→10) — it only nudges up at `lam = 10`,
-exactly where VE erodes. So:
+### Result — cyclic alignment makes colours legible (3 seeds, cyclic R²)
 
-- Cyclic scoring confirms there *is* recoverable circular structure (PCA gets 0.30),
-  and the earlier ≈0 was a scoring artifact — but it does **not** rescue the
-  factored coordinate. Under the *linear* alignment probe the curved coordinate
-  stays at ~0.13–0.17, **below PCA** — the one labelled manifold where the factored
-  approach loses on legibility even when scored fairly.
-- The reason is mechanical: a linear probe `w·z + b` cannot orient a coordinate onto
-  a circle. Making colours legible needs a **cyclic alignment term** (align to
-  `cos/sin`), not just cyclic scoring — that is the open item, not a quick fix.
+| lam_label | colors, LINEAR align (old) | colors, CYCLIC align (new) | colors VE@3 |
+|---|---|---|---|
+| 0 | 0.13 | 0.13 | 0.80 |
+| 0.3 | 0.13 | 0.24 | 0.80 |
+| 1 | 0.15 | 0.33 | 0.80 |
+| 3 | 0.17 | **0.41** | 0.80 |
+| 10 | 0.34 | **0.54** | 0.76 |
+
+With the matched **cyclic** alignment, colours' held-out cyclic R² climbs from 0.13
+to 0.54 and **crosses its PCA reference (0.30) at `lam ≈ 1`** while VE stays at 0.80
+(above PCA-3's colours VE ≈ 0.74) — so colours, too, becomes a modest Pareto win,
+exactly where the linear probe had left it stuck below PCA. This confirms the
+diagnosis was mechanical: legibility needs a *concept-shaped* target, not just a
+fair score.
+
+Honest residue: colours is still the **hardest** manifold in absolute terms
+(R² ~0.4–0.5, vs ~0.9 for years/geography). Hue is only one of three varying colour
+attributes (lightness/saturation also move) over ~1.8 k noisy points, so the loop is
+partly entangled; cyclic alignment lifts it clearly but does not fully linearise it.
+The `lam = 10` over-alignment knee (VE erosion) is unchanged.
 
 ## Possible next steps
 
-- **Cyclic-aware *alignment*** (align the coordinate to `cos/sin`, not just score it
-  that way) — the missing piece for colours; scoring alone left it below PCA.
 - **Unsupervised legibility**: replace the label prior with an isometry/arc-length
   penalty and see if a *label-free* coordinate lands near the `lam ≈ 1` point.
 - A **causal/steering** leg: move along a (now-legible) chart coordinate → smooth

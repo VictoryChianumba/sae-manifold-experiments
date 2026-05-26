@@ -6,9 +6,11 @@ label *worse* than PCA — a Pareto win on geometry fidelity but not on
 interpretability.)
 
 This script adds a weak **label-alignment** term to the factored-SAE training: a
-per-manifold linear probe on the dominant chart's coordinate, trained on TRAIN
-labels only (per-manifold standardized).  Sweeping its weight `lam_label` traces
-the **fidelity <-> legibility Pareto curve**:
+per-manifold probe on the dominant chart's coordinate, trained on TRAIN labels
+only.  The target is *concept-shaped* — a standardized scalar for non-cyclic
+labels, but ``(cos θ, sin θ)`` of the angle for cyclic ones (colours/hue), so a
+wrap-around coordinate can be oriented onto the concept's loop, not just a line.
+Sweeping its weight `lam_label` traces the **fidelity <-> legibility Pareto curve**:
 
   * y-axis: held-out subspace-capture VE@N (geometry fidelity)
   * x-axis: held-out label R^2 from the N-dim coordinate, FRESH linear probe
@@ -38,15 +40,15 @@ from sklearn.decomposition import PCA
 from data import load_manifold_data, CACHE_DIR
 from factored_sae import FactoredSAE, PRIMARY_LABEL
 from fair_comparison import (load_split, factored_eval, label_score, _ms,
-                             _pca_basis, _subspace_rep)
+                             _pca_basis, _subspace_rep, CYCLIC_LABEL)
 
 RESULTS_DIR = CACHE_DIR / "legible_coord"
 DEFAULT_MANIFOLDS = ["years", "age", "temperature", "colors", "geography"]
-# Cyclic-label manifolds are now scored cyclically (cos/sin of the angle, via
-# fair_comparison.label_score) so their R^2 is honest.  They are still kept out
-# of the "legibility-targeted" mean*, because the alignment term here is a LINEAR
-# probe on the raw label and cannot orient a wrap-around coordinate — making them
-# cyclically legible would need a cyclic alignment term (a further step).
+# Cyclic-label manifolds are scored cyclically (cos/sin of the angle, via
+# fair_comparison.label_score) AND, when lam_label>0, aligned cyclically (the
+# per-manifold probe targets cos/sin — see train_factored_legible).  They are
+# reported separately and kept out of mean* only so that average stays comparable
+# to earlier (non-cyclic) runs; the cyclic column shows their trajectory.
 CYCLIC = {"colors"}  # hue wraps
 
 
@@ -63,34 +65,51 @@ def _mixture_arrays(per):
             np.concatenate(ys).astype(np.float32), names)
 
 
-def train_factored_legible(Xtr_mix, mid_mix, y_mix, n_manifolds, coord_dim,
+def train_factored_legible(Xtr_mix, mid_mix, y_mix, names, coord_dim,
                            lam_label, seed, n_charts=12, epochs=120, batch=512,
                            lr=2e-3, lam_sparse=0.02, lam_balance=0.3):
     """Nonlinear factored SAE + weak per-manifold label alignment on the
-    dominant chart's coordinate (train labels only, per-manifold z-scored)."""
+    dominant chart's coordinate (train labels only).
+
+    The alignment target is *concept-shaped*: non-cyclic manifolds are aligned to
+    the standardized scalar label (a line), but cyclic manifolds (CYCLIC_LABEL,
+    e.g. colours/hue) are aligned to ``(cos θ, sin θ)`` of the angle — so the
+    coordinate can be oriented onto the concept's *loop* instead of a line, which
+    a linear probe on the raw value could never do.
+    """
     torch.manual_seed(seed); np.random.seed(seed)
+    n_manifolds = len(names)
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
     Xn = torch.from_numpy((Xtr_mix - mean) / std)
     mid = torch.from_numpy(mid_mix)
     N, d_in = Xn.shape
 
-    # Per-manifold label standardization (NaN-safe); store stats to invert later.
-    y = torch.from_numpy(y_mix)
-    y_std = y.clone()
-    valid = ~torch.isnan(y)
-    for m in range(n_manifolds):
-        sel = valid & (mid == m)
-        if sel.sum() > 1 and y[sel].std() > 0:
-            y_std[sel] = (y[sel] - y[sel].mean()) / (y[sel].std() + 1e-6)
-        else:
-            y_std[mid == m] = float("nan")  # unlabeled / constant -> no alignment
-    valid = ~torch.isnan(y_std)
+    # Per-point 2-component alignment target + active-component mask:
+    #   non-cyclic: target = (standardized label, --),  mask = (1, 0)
+    #   cyclic:     target = (cos θ, sin θ),             mask = (1, 1)
+    y = y_mix.astype(np.float32)
+    target = np.zeros((N, 2), np.float32)
+    tmask = np.zeros((N, 2), bool)
+    for m, name in enumerate(names):
+        sel = (mid_mix == m) & ~np.isnan(y)
+        if sel.sum() < 2:
+            continue
+        period = CYCLIC_LABEL.get(name)
+        if period is not None:
+            theta = 2 * np.pi * y[sel] / period
+            target[sel, 0], target[sel, 1] = np.cos(theta), np.sin(theta)
+            tmask[sel] = True
+        elif y[sel].std() > 0:
+            target[sel, 0] = (y[sel] - y[sel].mean()) / (y[sel].std() + 1e-6)
+            tmask[sel, 0] = True
+    target = torch.from_numpy(target)
+    tmask = torch.from_numpy(tmask)
 
     model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False)
-    # One linear probe per manifold: coord (R^cd) -> standardized label.
-    probe_w = torch.nn.Parameter(torch.zeros(n_manifolds, coord_dim))
-    probe_b = torch.nn.Parameter(torch.zeros(n_manifolds))
+    # Per-manifold probe: coord (R^cd) -> R^2; non-cyclic uses only component 0.
+    probe_w = torch.nn.Parameter(torch.zeros(n_manifolds, coord_dim, 2))
+    probe_b = torch.nn.Parameter(torch.zeros(n_manifolds, 2))
     opt = torch.optim.Adam(list(model.parameters()) + [probe_w, probe_b], lr=lr)
     eps = 1e-9
 
@@ -98,7 +117,7 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, n_manifolds, coord_dim,
         perm = torch.randperm(N)
         for i in range(0, N, batch):
             idx = perm[i:i + batch]
-            xb, mb, yb, vb = Xn[idx], mid[idx], y_std[idx], valid[idx]
+            xb, mb, tb, mkb = Xn[idx], mid[idx], target[idx], tmask[idx]
             recon, a, coords = model(xb)          # coords [B, M, cd]
             mse = ((recon - xb) ** 2).sum(-1).mean()
             ent_point = -(a * (a + eps).log()).sum(-1).mean()
@@ -106,14 +125,14 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, n_manifolds, coord_dim,
             ent_usage = -(usage * (usage + eps).log()).sum()
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
 
-            if lam_label > 0 and vb.any():
+            if lam_label > 0 and mkb.any():
                 # Align each labeled point's argmax-chart coordinate (detached
-                # selection) with its manifold's standardized label, linearly.
+                # selection) with its manifold's concept-shaped target.
                 ch = a.argmax(-1).detach()                       # [B]
                 csel = coords[torch.arange(len(xb)), ch]         # [B, cd]
-                w = probe_w[mb]; b = probe_b[mb]                 # [B, cd], [B]
-                pred = (csel * w).sum(-1) + b
-                loss = loss + lam_label * ((pred[vb] - yb[vb]) ** 2).mean()
+                pred = torch.einsum("bc,bck->bk", csel, probe_w[mb]) + probe_b[mb]
+                sq = (pred - tb) ** 2 * mkb                       # [B, 2]
+                loss = loss + lam_label * sq.sum() / mkb.sum().clamp(min=1)
 
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
@@ -133,7 +152,6 @@ def run(manifolds, seeds, lams, coord_dim, headline_N):
         print(f"\n===== seed {seed} =====")
         per, _ = load_split(manifolds, seed)
         Xtr_mix, mid_mix, y_mix, names = _mixture_arrays(per)
-        n_manifolds = len(names)
 
         # PCA reference legibility (held-out linear R^2 from top-N PCs).
         for name in names:
@@ -145,7 +163,7 @@ def run(manifolds, seeds, lams, coord_dim, headline_N):
         for lam in lams:
             print(f"  training nonlinear factored, lam_label={lam}...")
             model, norm = train_factored_legible(
-                Xtr_mix, mid_mix, y_mix, n_manifolds, coord_dim, lam, seed)
+                Xtr_mix, mid_mix, y_mix, names, coord_dim, lam, seed)
             for name in names:
                 d = per[name]
                 fve, Ztr, Zte, _ = factored_eval(
@@ -188,8 +206,8 @@ def _report(manifolds, lams, ve, r2lin, r2knn, pca_r2, cd, N, seeds):
         leg_mean = np.mean([_ms(r2lin[(lam, m)])[0] for m in legible])
         print(f"{lam:>6}" + "".join(f"{v:>11.2f}" for v in row)
               + f"{leg_mean:>9.2f}")
-    print("  (colors = cyclic cos/sin R²; mean* = mean over non-cyclic labeled "
-          f"manifolds, excludes {sorted(CYCLIC)} — its alignment probe is linear)")
+    print("  (colors = cyclic cos/sin R², now cyclically aligned too; "
+          f"mean* = mean over non-cyclic labeled manifolds, excludes {sorted(CYCLIC)})")
 
 
 def _save(lams, ve, r2lin, r2knn, pca_r2, seeds, cd, N):
@@ -207,7 +225,7 @@ def _plot(manifolds, lams, ve, r2lin, pca_r2, cd):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    names = [m for m in manifolds if (lams[0], m) in ve and m not in CYCLIC]
+    names = [m for m in manifolds if (lams[0], m) in ve]
     ncol = len(names)
     fig, axes = plt.subplots(1, ncol, figsize=(3.6 * ncol, 3.6), squeeze=False)
     for ax, m in zip(axes[0], names):
@@ -219,7 +237,8 @@ def _plot(manifolds, lams, ve, r2lin, pca_r2, cd):
                         xytext=(3, 3), textcoords="offset points")
         pr = _ms(pca_r2[m])[0]
         ax.axvline(pr, color="gray", ls="--", lw=1, label=f"PCA R²={pr:.2f}")
-        ax.set_title(m); ax.set_xlabel("held-out label R² (linear)")
+        cyc = " (cyclic)" if m in CYCLIC else ""
+        ax.set_title(m + cyc); ax.set_xlabel("held-out label R²")
         ax.grid(alpha=0.3); ax.legend(fontsize=7, loc="lower left")
     axes[0][0].set_ylabel(f"held-out VE@{cd}")
     fig.suptitle("Fidelity ↔ legibility Pareto as label-alignment weight increases "

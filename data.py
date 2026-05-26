@@ -19,6 +19,7 @@ Usage:
   uv run data.py                   # extract all manifolds, cache to cache/
   uv run data.py --manifold colors # extract a single manifold
 """
+import os
 import json
 import colorsys
 from pathlib import Path
@@ -28,11 +29,31 @@ import numpy as np
 from tqdm import tqdm
 
 # ── Config ───────────────────────────────────────────────────────────────────
+# Defaults target Llama-3.1-8B (the paper's model). Every value can be
+# overridden with an environment variable so the same pipeline runs against a
+# small model on modest hardware, e.g. on an 8 GB Apple-Silicon laptop:
+#
+#   export SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M   # Llama-arch, 540 MB
+#   export SAE_LAYER=19                                # 0-29 valid for 135M
+#   export SAE_D_MODEL=576                             # SmolLM2-135M hidden size
+#
+# SmolLM2 uses LlamaForCausalLM, so the `model.model.layers[LAYER]` access path
+# below is identical to Llama-3.1-8B and needs no code change.
 
-MODEL_NAME = "meta-llama/Llama-3.1-8B"
-LAYER = 19
-D_MODEL = 4096
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MODEL_NAME = os.environ.get("SAE_MODEL_NAME", "meta-llama/Llama-3.1-8B")
+LAYER = int(os.environ.get("SAE_LAYER", "19"))
+D_MODEL = int(os.environ.get("SAE_D_MODEL", "4096"))
+
+
+def _default_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+DEVICE = os.environ.get("SAE_DEVICE", _default_device())
 CACHE_DIR = Path(__file__).parent / "cache"
 
 
@@ -202,8 +223,13 @@ def get_all_manifold_names():
 def load_llm():
     import nnsight
     from transformers import AutoTokenizer
-    print(f"Loading {MODEL_NAME}...")
-    model = nnsight.LanguageModel(MODEL_NAME, device_map="auto", dispatch=True)
+    print(f"Loading {MODEL_NAME} on {DEVICE}...")
+    # device_map="auto" assumes an accelerate/CUDA placement planner; on CPU/MPS
+    # we place the model explicitly instead.
+    if DEVICE == "cuda":
+        model = nnsight.LanguageModel(MODEL_NAME, device_map="auto", dispatch=True)
+    else:
+        model = nnsight.LanguageModel(MODEL_NAME, device_map=DEVICE, dispatch=True)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     for p in model.model.parameters():
         p.requires_grad = False

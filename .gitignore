@@ -3,7 +3,6 @@ __pycache__/
 *.pyo
 *.egg-info/
 .venv/
-uv.lock
 cache/
 results/
 *.pt
@@ -17,3 +16,4 @@ results/
 .DS_Store
 .idea/
 .vscode/
+.claude/

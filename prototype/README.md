@@ -140,12 +140,60 @@ the win is reconstruction-geometry, and the interpretability payoff the whole
 premise rests on is *not* demonstrated and partly contradicted. Earning that is the
 real next step, not a foregone conclusion.
 
+## Making the coordinate legible (`legible_coord.py`)
+
+The unmet bar above was *interpretability*: the nonlinear coordinate reconstructed
+well but decoded the label poorly. `legible_coord.py` tests whether a coordinate
+can be **both** by adding a weak **label-alignment** term — a per-manifold linear
+probe on the dominant chart's coordinate, trained on TRAIN labels only
+(per-manifold standardized) — and sweeping its weight `lam_label`. The reported
+label R² still uses a *fresh* held-out linear probe (same protocol as
+`fair_comparison`), so alignment only *shapes* the coordinate; R² still tests
+generalization.
+
+```bash
+SAE_DEVICE=cpu SAE_D_MODEL=576 uv run python prototype/legible_coord.py \
+    --seeds 0 1 2 --lams 0 0.3 1 3 10
+# -> cache/legible_coord/{results.json, pareto.png, run.log}
+```
+
+### Result — legibility is nearly free (3 seeds, coord_dim = 3)
+
+| lam_label | VE@3 (mean) | label R² linear, non-cyclic mean | years R² | geography R² |
+|---|---|---|---|---|
+| 0 (unsupervised) | 0.68 | 0.55 | 0.16 | 0.41 |
+| 0.3 | 0.67 | 0.66 | 0.24 | 0.69 |
+| **1** | **0.68** | **0.89** | **0.89** | **0.80** |
+| 3 | 0.64 | 0.94 | 0.98 | 0.87 |
+| 10 | 0.63 | 0.95 | 0.99 | 0.91 |
+
+**Verdict — the interpretability bar is met (for curved manifolds).** At
+`lam_label = 1`, held-out label R² jumps from 0.16→0.89 (years) and 0.41→0.80
+(geography) **with essentially no reconstruction cost** (VE@3 mean 0.68→0.68; years
+0.84→0.83). At that operating point the curved-manifold coordinate **beats PCA on
+both axes simultaneously** — fidelity (years VE 0.83 vs PCA-3 0.39; geography 0.76
+vs 0.52) *and* legibility (years R² 0.89 vs PCA 0.75; geography 0.80 vs 0.60). So
+the earlier fidelity↔legibility tension was an artifact of the *unsupervised*
+coordinate being free to bend arbitrarily; a weak orientation prior removes it.
+
+Honest caveats (see `pareto.png`):
+- **Push too hard and the tradeoff reappears.** At `lam = 10`, R² saturates (~0.95)
+  but VE erodes (geography 0.76→0.69, colors 0.80→0.77). The clean operating point
+  is the knee, `lam ≈ 1`; alignment and reconstruction only *compete* past it.
+- **This uses weak label supervision.** The router/charts stay unsupervised; only
+  the within-chart *axis* is oriented by the label. That fits a "probe a known
+  concept" setting, not unsupervised discovery — be clear about which claim is made.
+- **`age` stays weak** (VE ≈ 0.29, and it degrades at high `lam`): 69 train points
+  is too few for the MLP, so alignment and reconstruction fight over scarce data.
+- **`colors` (cyclic hue) stays illegible under linear R²** — the documented
+  wraparound artifact; needs cyclic-aware scoring, not more alignment.
+
 ## Possible next steps
 
-- **Make the coordinate legible** (the now-open question): regularise the chart so
-  the coordinate decodes the label *linearly* (e.g. monotonic/arc-length penalty,
-  or a label-aligned coordinate prior) and re-check the label-R² leg — that, not
-  reconstruction, is the unmet bar.
-- Cyclic-aware coordinate scoring (colors/days wrap → linear R²≈0 understates).
-- A causal/steering leg: move along a chart coordinate → smooth predicted-output change.
+- **Cyclic-aware coordinate scoring** (predict sin/cos) so colors/days aren't
+  unfairly scored ≈0 by linear R².
+- **Unsupervised legibility**: replace the label prior with an isometry/arc-length
+  penalty and see if a *label-free* coordinate lands near the `lam ≈ 1` point.
+- A **causal/steering** leg: move along a (now-legible) chart coordinate → smooth
+  predicted-output change.
 - Group-sparse (top-k charts) selection instead of soft softmax.

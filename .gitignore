@@ -17,3 +17,6 @@ results/
 .idea/
 .vscode/
 .claude/
+
+# vim swap files
+*.swp

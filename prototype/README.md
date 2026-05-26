@@ -227,10 +227,57 @@ attributes (lightness/saturation also move) over ~1.8 k noisy points, so the loo
 partly entangled; cyclic alignment lifts it clearly but does not fully linearise it.
 The `lam = 10` over-alignment knee (VE erosion) is unchanged.
 
+## Unsupervised isometry legibility (`iso_coord.py`) — a negative result
+
+Can a coordinate be made legible **without any labels**? `iso_coord.py` drops the
+label-alignment crutch and instead adds a label-free **isometry / arc-length**
+penalty (cf. Gropp et al., *Isometric Autoencoders*, 2020): along a random unit
+direction in coordinate space, each chart decoder's finite-difference speed
+`‖J_m u‖` is pinned to a fixed target (router-weighted), making the decoder
+constant-speed so the coordinate becomes arc-length. The fixed (not free) target is
+what stops the trivial `z → const` collapse a variance-only penalty allows. No label
+is used in training; held-out label R² (cyclic-aware) is a pure generalization test.
+
+### Result — isometry does *not* recover legibility (3 seeds)
+
+| lam_iso | VE@3 (mean) | label R², non-cyclic mean* | years | geography | colors (cyclic) |
+|---|---|---|---|---|---|
+| 0 (unsup.) | 0.68 | 0.55 | 0.16 | 0.41 | 0.13 |
+| 1 | 0.65 | 0.63 | 0.45 | 0.35 | 0.19 |
+| 3 | 0.60 | 0.60 | 0.31 | 0.39 | 0.11 |
+| 10 | 0.32 | 0.55 | 0.11 | 0.51 | 0.21 |
+| 30 | −0.06 | 0.60 | 0.39 | 0.11 | 0.18 |
+
+**Verdict — negative, and clearly so.** The legibility mean* never moves outside
+seed noise (0.55 → 0.63 peak at `lam = 1`, then flat), and that tiny bump already
+costs reconstruction (VE 0.68 → 0.65). The isometry points **never reach the PCA
+reference** on legibility for any manifold (see `pareto.png`), and any weight large
+enough to actually reshape the coordinate **destroys reconstruction** (VE → 0.32 at
+`lam = 10`, negative at 30). Compare the supervised result: a *concept-shaped* label
+prior took mean* from 0.55 → 0.89 at `lam = 1` with **zero** VE cost.
+
+Why it fails — and it's instructive:
+- **Arc-length ≠ linear-in-coordinate.** Isometry makes equal coordinate steps equal
+  manifold steps, but a 3-D isometric coordinate can still *wind* arbitrarily through
+  coordinate space; linear R² needs the label to be ~linear in the coords, which
+  isometry does not impose. Arc-length is necessary, not sufficient, for legibility.
+- **It fights reconstruction.** Forcing uniform decoder speed distorts the chart's
+  fit to a non-uniformly-curved manifold, so VE collapses well before legibility
+  improves.
+- **No help for the entangled/cyclic cases** (colors stuck ~0.1–0.2): isometry says
+  nothing about *which* coordinate direction is the concept.
+
+So legibility here is cheap **with** a weak, concept-shaped label prior but not
+recoverable from this label-free isometry prior. Unsupervised legibility remains
+open.
+
 ## Possible next steps
 
-- **Unsupervised legibility**: replace the label prior with an isometry/arc-length
-  penalty and see if a *label-free* coordinate lands near the `lam ≈ 1` point.
+- **Unsupervised legibility, take two**: arc-length alone is insufficient — pair
+  isometry with a *coordinate-parsimony* prior (use as few coordinate dims as the
+  manifold needs) so the legible axis is forced to be low-dimensional and straight;
+  or a proper isometric-AE (exact Jacobian + encoder pseudo-inverse term) rather than
+  the finite-difference surrogate here.
 - A **causal/steering** leg: move along a (now-legible) chart coordinate → smooth
   predicted-output change.
 - Group-sparse (top-k charts) selection instead of soft softmax.

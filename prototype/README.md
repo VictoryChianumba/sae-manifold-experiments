@@ -68,11 +68,84 @@ Two takeaways, both echoing the paper:
   A cyclic-aware score (predict sin/cos) would fix this — not yet implemented.
 - Not a scalable SAE: no sparsity in the SAE sense, trained on tiny curated data.
 
+## The fair comparison (`fair_comparison.py`)
+
+The ablation ladder above is *suggestive but confounded* (coord-dim capacity,
+in-sample R², no real-SAE baseline, one seed). `fair_comparison.py` is the
+controlled redo — everything **held out**, scored in **raw activation units**
+against a single per-manifold denominator, **3 seeds**:
+
+- **Primary metric = the paper's own subspace-capture VE(N)**, made
+  architecture-agnostic: for each manifold, the fraction of its *test* activation
+  variance explained by an **N-dimensional per-point code**. PCA-N is the optimal
+  linear ceiling; a linear dictionary can at best reach it; only a *curved* decoder
+  can exceed it.
+- **Curvature is the only free variable** between the two factored conditions
+  (linear vs nonlinear charts at identical `coord_dim`, `n_charts`, training).
+- **Two real SAE baselines**: the off-the-shelf C4-trained SAE, and a standard
+  BatchTopK SAE *retrained on the same mixture train split* (isolates architecture
+  from training data).
+
+```bash
+SAE_DEVICE=cpu SAE_D_MODEL=576 uv run python prototype/fair_comparison.py \
+    --seeds 0 1 2 --coord-dims 2 3
+# -> cache/fair_comparison/{results.json, ve_curves.png, run.log}
+```
+
+### Result — held-out VE at N=3 (mean ± sd over 3 seeds)
+
+| method | years | age | temperature | colors | geography |
+|---|---|---|---|---|---|
+| PCA (linear ceiling) | 0.39 | **0.79** | **0.79** | 0.74 | 0.52 |
+| SAE-C4 geometric | 0.09 | 0.06 | 0.09 | 0.09 | 0.04 |
+| SAE-mix geometric | 0.10 | 0.27 | 0.50 | 0.53 | 0.20 |
+| SAE-mix statistical | 0.05 | 0.03 | 0.38 | 0.37 | 0.09 |
+| Factored **LINEAR** | 0.09 | −0.07 | 0.05 | 0.57 | 0.12 |
+| Factored **NONLINEAR** | **0.84** | 0.29 | 0.68 | **0.80** | **0.76** |
+
+Curvature delta (`nl − lin`) is large and positive everywhere: years +0.75,
+geography +0.65, temperature +0.63, age +0.36, colors +0.23 — robust across
+seeds and at `coord_dim = 2` as well.
+
+**The honest verdict — a split decision, leaning positive:**
+
+1. **Curvature is real and decisive at matched dimensionality.** The nonlinear
+   charts beat the linear charts at the *same* `coord_dim` on every manifold, by
+   margins many× the seed spread. This is the cleanest possible isolation of the
+   paper's thesis: the failure is the *straightness* of the atoms, not the
+   clustering or the parameter count (the linear-chart control has both).
+2. **On genuinely curved manifolds, curvature beats even the linear ceiling.**
+   Factored-NL exceeds **PCA-N** on years (+0.45), geography (+0.25), colors
+   (+0.07) — a curved 3-coord code reconstructs held-out activations better than
+   *any* linear 3-D subspace can. That is a non-trivial positive result, not just
+   "matches the remedy the paper already names."
+3. **On essentially-linear manifolds it loses, by design.** age (−0.50) and
+   temperature (−0.11) are near-1-D lines; PCA already saturates and the nonlinear
+   chart *underfits* them (tiny manifolds: age = 69 train points). Curvature helps
+   exactly where there is curvature — and the held-out split correctly penalises it
+   where there isn't.
+4. **The interpretability leg does NOT come for free — report this loudly.** The
+   secondary *held-out label R²* (same regressor, all conditions) shows the
+   nonlinear coords decode the label **worse** than PCA or even the linear charts on
+   years (NL 0.16 lin / 0.29 kNN vs PCA 0.75) and geography. Better reconstruction
+   geometry ≠ a more legible coordinate: the curved chart spends its fidelity on
+   bending through activation space, not on laying the label out linearly. So this
+   is a Pareto move on *geometry fidelity* but **not** (yet) on
+   *interpretability/parsimony* — the bar we set ourselves. kNN recovers some of the
+   gap, so the label is present in the coords but nonlinearly embedded.
+
+Bottom line: **curvature genuinely buys held-out geometric fidelity beyond the
+linear ceiling on curved manifolds** — the central claim survives a fair test. But
+the win is reconstruction-geometry, and the interpretability payoff the whole
+premise rests on is *not* demonstrated and partly contradicted. Earning that is the
+real next step, not a foregone conclusion.
+
 ## Possible next steps
 
-- Cyclic-aware coordinate scoring; a viz of one chart's coordinate vs. its label.
-- Group-sparse selection (top-k charts) instead of soft softmax.
-- Train on background activations and see whether charts discover manifolds in the
-  wild (not just in the curated mixture).
-- Factor the code explicitly into discrete selector + continuous coordinate and
-  compare to a matched standard SAE on the paper's subspace-capture metric.
+- **Make the coordinate legible** (the now-open question): regularise the chart so
+  the coordinate decodes the label *linearly* (e.g. monotonic/arc-length penalty,
+  or a label-aligned coordinate prior) and re-check the label-R² leg — that, not
+  reconstruction, is the unmet bar.
+- Cyclic-aware coordinate scoring (colors/days wrap → linear R²≈0 understates).
+- A causal/steering leg: move along a chart coordinate → smooth predicted-output change.
+- Group-sparse (top-k charts) selection instead of soft softmax.

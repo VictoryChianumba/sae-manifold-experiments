@@ -336,6 +336,72 @@ predicted — but its strength must match the manifold's intrinsic dimension, wh
 global knob can't know. **Intrinsic-dimension-adaptive parsimony is the open
 frontier.**
 
+### 8.3 Intrinsic-dimension-adaptive parsimony (`adaptive_parsimony.py`) — a qualified negative
+
+The §8.2 fix is to let **each chart learn how many coordinate dims it needs** instead
+of one global target. We replace the global PR penalty with a per-chart, per-dim
+learned **gate** `g_{m,j} ∈ (0,1)` on the coordinate, plus a fixed **per-dimension
+cost** (L1 on the gates, with mild Matryoshka ordering so dim 0 fills first). The
+intended mechanism: a *nonlinear* chart only needs coordinate dims equal to the
+manifold's **intrinsic** dimension (the MLP supplies the embedding/curvature), so
+reconstruction should pay to keep ~1 dim for the years-helix/temperature-line and ~2
+for the geography-sphere/colours-loop — the active-dim count self-adapts per chart,
+which a global knob cannot. (Anti-gaming: each coordinate dim is normalized by a
+running-std buffer before gating, so the L1 cost can't be dodged by shrinking the
+coordinate and inflating the decoder — the failure mode that motivated PR.)
+
+**Result (3 seeds, label-free, grid over `lam_iso ∈ {0,1}` × `lam_gate ∈ {0,2,4,8}`):**
+
+| config | years | temperature | geography | colors | active-dims (Σgates, dom. chart) |
+|---|---|---|---|---|---|
+| gate=0 (gated baseline) | 0.64 | 0.82 | 0.38 | 0.17 | ~2.67 |
+| gate=8, iso=0 | 0.67 | 0.78 | 0.30 | 0.14 | ~1.3 |
+| gate=8, iso=1 | 0.62 | 0.80 | 0.45 | 0.23 | ~1.3–1.7 |
+| *global-PR (iso=1,p=8), for ref* | *0.70* | *0.89* | ***0.08*** | ***0.07*** | *~1.4* |
+
+Two honest takeaways:
+
+1. **The explicit goal is met, but only narrowly.** Adaptive gates do **not**
+   over-collapse the multi-D manifolds the way the global PR knob did: geography stays
+   **0.30–0.45** (vs PR's 0.08) and colours **0.14–0.23** (vs 0.07). So adaptivity
+   fixes the over-collapse. **But the gate penalty is nearly inert as a legibility
+   lever** — sweeping `lam_gate` barely moves held-out R² (the non-cyclic mean is flat
+   ~0.57–0.63), the gates close **roughly uniformly** to ~1.3 active dims for *every*
+   manifold (no clean intrinsic-dimension differentiation), and VE erodes mildly. It
+   *avoids harm* rather than producing the targeted differential dim allocation.
+   *Why:* in this weak 135M geometry the nonlinear charts reconstruct even geography
+   fine from ~1 effective dim (its VE holds ~0.64 as gates collapse 2.67→1.3), so there
+   is little differential reconstruction pressure for the gates to grab onto — the
+   manifolds are barely "multi-D" here. The global PR knob hurt geography not by
+   removing *needed* reconstruction dims but by forcing PR→1 so hard the single axis
+   *wound*; the gentler gate doesn't force that, so geography survives — by doing less.
+
+2. **The one genuinely new lever is incidental, and it's a *trade*.** Isolated with
+   `--no-coord-norm` (gate=0, iso=0, 3 seeds), the per-dim **coordinate normalization**
+   — added only for anti-gaming — is *itself* a label-free legibility lever:
+
+   | coord_norm | years R² | age R² | temp R² | geo R² | | years VE | temp VE | geo VE |
+   |---|---|---|---|---|---|---|---|---|
+   | **on** | **0.64** | 0.68 | 0.82 | 0.38 | | 0.45 | 0.51 | 0.64 |
+   | off (≈ plain factored) | 0.28 | 0.82 | 0.78 | 0.31 | | **0.79** | **0.69** | **0.76** |
+
+   Normalizing the coordinate a linear probe sees lifts years legibility **0.28→0.64**,
+   but **pays for it in reconstruction** (years VE 0.79→0.45) and slightly *hurts* the
+   near-linear `age`. So it's a Pareto move *along* the fidelity↔legibility frontier —
+   it whitens the coordinate's per-dim scales (which a linear probe is sensitive to) at
+   the cost of the decoder's freedom — not a free unsupervised win.
+
+**Verdict:** a **qualified negative**. As a learned-gate L1, intrinsic-dimension-
+adaptive parsimony *cures the over-collapse* (its stated job) but **fails to deliver
+the differential dim allocation** that was the actual hope — gates close uniformly and
+legibility is flat in the penalty, because at this scale the manifolds are effectively
+~1-D to a nonlinear chart. The unsupervised legibility frontier is therefore **still
+open**: the cleanest unsupervised lever we found (coordinate normalization) is a
+fidelity↔legibility *trade*, and the supervised concept-shaped prior (Part V) remains
+the only route that buys legibility at ~zero reconstruction cost. The honest read is
+that "match parsimony to intrinsic dimension" needs a setting where the manifolds
+*are* genuinely multi-D — which points back at real-model validation (#13).
+
 ---
 
 ## 9. Part VII — Steering: the coordinate is causal, not just decodable (`steer.py`)
@@ -389,7 +455,8 @@ axis, not only a random control.
 | Cyclic scoring (colours) | ✅ Honest scoring (artifact removed); ⚠️ scoring alone insufficient |
 | Cyclic alignment (colours) | ✅ Crosses PCA at lam≈1; ⚠️ still hardest manifold |
 | Unsupervised isometry alone | ❌ Negative; arc-length ≠ linear-in-coordinate |
-| Isometry + parsimony | ◐ Qualified positive: works on low-D, over-collapses multi-D |
+| Isometry + parsimony (global) | ◐ Qualified positive: works on low-D, over-collapses multi-D |
+| Adaptive parsimony (learned per-dim gates) | ◐/❌ Qualified negative: cures over-collapse but gates close uniformly (no intrinsic-dim differentiation); incidental finding = coordinate normalization trades VE for years legibility |
 | Steering along the legible axis | ✅ Causal: monotone hot/cold shift, ~13× a random control |
 
 ---
@@ -450,9 +517,16 @@ real model, **bonus:** a causal/steering leg) is now **largely met**:
    `cache/viz/coord_vs_label.png` (predicted-vs-true label, unsupervised vs aligned)
    and `cache/viz/colors_circle.png` (the partial hue loop). The diagonal-tightening
    makes the legibility claim falsifiable at a glance.
-3. **Intrinsic-dimension-adaptive parsimony** (per-chart learned dim, or a
-   Matryoshka/nested coordinate with per-dim gates) — to fix the over-collapse of
-   geography/colours while keeping the years/temperature win.
+3. ~~**Intrinsic-dimension-adaptive parsimony**~~ ◐/❌ **Attempted** (§8.3,
+   `adaptive_parsimony.py`): per-chart learned per-dim gates with a fixed per-dim
+   (Matryoshka-ordered) cost. **Qualified negative** — it cures the global knob's
+   over-collapse (geography/colours survive) but the gates close ~uniformly, so the
+   intended *differential* dim allocation never materializes and legibility is flat in
+   the penalty (at 135M scale the manifolds are effectively ~1-D to a nonlinear chart).
+   Incidental positive: coordinate normalization is a label-free fidelity↔legibility
+   *trade* (years R² 0.28→0.64 at the cost of VE 0.79→0.45). The unsupervised frontier
+   stays open; revisiting on a genuinely multi-D (real-model) geometry is the natural
+   next test.
 4. **A proper isometric-AE** (exact Jacobian + encoder pseudo-inverse term) instead of
    the finite-difference surrogate, to give isometry its fairest shot.
 5. **Validate on a real model** — at least one larger model / more layers, to show the
@@ -482,7 +556,8 @@ loads the model).
 | Fair comparison | `uv run python prototype/fair_comparison.py --seeds 0 1 2 --coord-dims 2 3` | `cache/fair_comparison/` |
 | Legible coordinate (supervised) | `uv run python prototype/legible_coord.py --seeds 0 1 2 --lams 0 0.3 1 3 10` | `cache/legible_coord/` |
 | Isometry (unsupervised) | `uv run python prototype/iso_coord.py --seeds 0 1 2 --lams 0 1 3 10 30` | `cache/iso_coord/` |
-| Isometry + parsimony | `uv run python prototype/iso_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-pars 0 2 8` | `cache/iso_parsimony/` |
+| Isometry + parsimony (global) | `uv run python prototype/iso_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-pars 0 2 8` | `cache/iso_parsimony/` |
+| Adaptive parsimony (gated) | `uv run python prototype/adaptive_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-gates 0 2 4 8` | `cache/adaptive_parsimony/` |
 | Legibility figures | `uv run python prototype/viz_coord.py` | `cache/viz/` |
 | Steering (loads model) | `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19 uv run python prototype/steer.py` | `cache/steer/` |
 
@@ -490,10 +565,13 @@ loads the model).
 (standard BatchTopK SAE), `subspace_capture.py` (the paper's metric),
 `prototype/factored_sae.py` (the atlas SAE), `prototype/fair_comparison.py` (the
 fair test + shared eval helpers), `prototype/legible_coord.py`,
-`prototype/iso_coord.py`, `prototype/iso_parsimony.py`, `prototype/viz_coord.py`
+`prototype/iso_coord.py`, `prototype/iso_parsimony.py`,
+`prototype/adaptive_parsimony.py` (gated, intrinsic-dim-adaptive),
+`prototype/viz_coord.py`
 (legibility figures), `prototype/steer.py` (causal steering). Detailed reproduction notes
 in `REPRODUCTION.md`; prototype notes in `prototype/README.md`.
 
 ---
 
-*Last updated: 2026-05-27. Open threads tracked in §11.*
+*Last updated: 2026-05-27 (added §8.3 adaptive parsimony — qualified negative).
+Open threads tracked in §11/§12.*

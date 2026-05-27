@@ -103,6 +103,18 @@ not discovery.)
   worked — but a *single global* weight **over-collapsed** the multi-D ones (geography
   0.41→0.01, colours→0.07). *Lesson: the right parsimony = intrinsic dimension, which a
   global knob can't know.*
+- **Adaptive parsimony (learned per-dim gates) — qualified negative.** Gave each chart
+  a per-dim gate + a fixed per-dim cost so it keeps only the dims reconstruction pays
+  for (intrinsic, not embedding, dim). It *does* cure the over-collapse — geography
+  (0.30–0.45) and colours (0.14–0.23) survive, vs the global knob's 0.08/0.07 — but the
+  gates close ~uniformly (~1.3 dims everywhere), so the intended *differential* dim
+  allocation never appears and legibility is flat in the penalty. *Why:* at 135M scale
+  a nonlinear chart reconstructs even geography from ~1 effective dim, so there's no
+  differential pressure to exploit. The only new lever was incidental — per-dim
+  **coordinate normalization** trades reconstruction for years legibility (R² 0.28→0.64
+  at VE 0.79→0.45), a Pareto move, not a free win. *Lesson: "match parsimony to
+  intrinsic dim" needs a setting where the manifolds are genuinely multi-D — pointing
+  back at real-model validation.*
 
 ## Part VII — Is the coordinate causal? (steering)
 
@@ -131,6 +143,7 @@ readout and a causal control, on a small model.*
 the lens not the model except in Part VII; "matched dimensionality" isn't fully
 "matched capacity"; the legibility wins lean on weak supervision.
 
-**Open threads (tasks #12–#17):** adaptive parsimony (close the unsupervised frontier),
-real-model validation, in-the-wild router, group-sparse charts, proper isometric-AE,
-more seeds.
+**Open threads (tasks #13–#17):** ~~adaptive parsimony~~ (◐/❌ attempted — cures
+over-collapse but no differential dim allocation; unsupervised frontier stays open),
+real-model validation (#13, now also the natural retest for adaptive parsimony),
+in-the-wild router, group-sparse charts, proper isometric-AE, more seeds.

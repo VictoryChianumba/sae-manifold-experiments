@@ -18,9 +18,19 @@
 ## State (2026-05-27)
 Parts I–VII **done** (reproduction → atlas SAE → fair comparison → supervised+cyclic
 legibility → unsupervised isometry/parsimony → causal steering). Tasks **#10
-(coord-vs-label viz)** and **#11 (causal/steering leg)** done. The five-point fair-
-comparison bar is fully met; the broader "improvement" bar is largely met (fidelity ✅,
-interpretability ✅ supervised / ◐ unsupervised, steering ✅; **real-model ❌**).
+(coord-vs-label viz)**, **#11 (causal/steering leg)**, and **#12 (adaptive parsimony)**
+done. The five-point fair-comparison bar is fully met; the broader "improvement" bar is
+largely met (fidelity ✅, interpretability ✅ supervised / ◐ unsupervised, steering ✅;
+**real-model ❌**).
+
+**#12 adaptive parsimony — DONE, qualified negative** (`prototype/adaptive_parsimony.py`,
+WRITEUP §8.3). Per-chart learned per-dim gates + fixed per-dim cost. Cures the global
+knob's over-collapse (geography/colours survive: 0.30–0.45 / 0.14–0.23 vs PR's 0.08/0.07)
+but gates close ~uniformly → no differential dim allocation, legibility flat in the
+penalty (at 135M the manifolds are ~1-D to a nonlinear chart). Incidental: coordinate
+normalization is a fidelity↔legibility *trade* (years R² 0.28→0.64 at VE 0.79→0.45).
+Unsupervised frontier still open; revisit on a real (genuinely multi-D) geometry. **#13
+is now NEXT** and doubles as the retest for adaptive parsimony.
 
 Headline: a curved factored SAE beats the PCA linear ceiling on curved manifolds; a
 weak concept-shaped label prior makes its coordinate legible at ~zero fidelity cost
@@ -33,19 +43,18 @@ parsimony); and the legible axis causally steers the model (~13× a random contr
   `factored_eval`, `label_score` incl. cyclic, `_pca_basis`, `CYCLIC_LABEL`, `_ms`).
 - `legible_coord.py` — supervised label-alignment sweep (concept-shaped, incl. cyclic).
 - `iso_coord.py` — unsupervised isometry (negative).
-- `iso_parsimony.py` — isometry + participation-ratio parsimony (qualified positive).
+- `iso_parsimony.py` — isometry + global participation-ratio parsimony (qualified positive).
+- `adaptive_parsimony.py` — per-chart learned per-dim gates (intrinsic-dim-adaptive
+  parsimony); qualified negative + the coordinate-normalization trade (`--no-coord-norm`).
 - `viz_coord.py` — legibility figures (`cache/viz/`).
 - `steer.py` — causal steering (`cache/steer/`); loads the model via nnsight.
 - (repo root) `data.py`, `saes.py`, `train_sae.py`, `subspace_capture.py`.
 
 ## Remaining tasks (work through in this order; reason about WHY before each)
-- **#12 Intrinsic-dimension-adaptive parsimony (NEXT).** iso+parsimony recovered
-  label-free legibility on low-D manifolds but a single global weight over-collapsed
-  multi-D ones (geography, colours). Let each chart learn how many coord dims it needs
-  (per-chart learned/annealed target, or a Matryoshka/nested coordinate with per-dim
-  gates) → keep the years/temperature win without killing geography/colours.
-- **#13 Real-model validation.** Biggest external-validity threat (everything is 135M).
-  Re-run the core fair comparison on a larger model / more layers.
+- **#13 Real-model validation (NEXT).** Biggest external-validity threat (everything is
+  135M). Re-run the core fair comparison on a larger model / more layers. Bonus: it's
+  the natural retest for #12 — adaptive parsimony needs a genuinely multi-D geometry to
+  show differential dim allocation, which a bigger model should provide.
 - **#14 In-the-wild router.** Train the factored model on *background* activations (not
   the curated mixture) and test whether charts discover the manifolds unsupervised —
   validates the "router = learned feature clustering" claim that's asserted, not shown.

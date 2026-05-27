@@ -560,6 +560,13 @@ loads the model).
 | Adaptive parsimony (gated) | `uv run python prototype/adaptive_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-gates 0 2 4 8` | `cache/adaptive_parsimony/` |
 | Legibility figures | `uv run python prototype/viz_coord.py` | `cache/viz/` |
 | Steering (loads model) | `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19 uv run python prototype/steer.py` | `cache/steer/` |
+| **Full suite, one command** | `uv run python prototype/run_all.py --layers 19 --seeds 0 1 2` | `cache/<model>_L<layer>/…` |
+
+The last row is the **end-to-end driver** (`prototype/run_all.py`): model-agnostic via
+the same env vars, it runs `extract → background → sae → fair → legible → iso →
+adaptive` per layer into a per-`(model, layer)` cache tag, skipping finished stages.
+It's how the real-model validation (#13) runs on a cloud GPU — see **`RUNPOD.md`** for
+the Llama-3.1-8B runbook (transfer, torch/CUDA + HF-gating caveats, layer/seed sweeps).
 
 **Key files:** `data.py` (manifolds + extraction), `train_sae.py` / `saes.py`
 (standard BatchTopK SAE), `subspace_capture.py` (the paper's metric),

@@ -8,6 +8,10 @@
   the model (e.g. `steer.py`). Run from repo root as `uv run python ...`.
 - Background jobs: `nohup` + logfile + a `cache/.done` flag; prints are block-buffered
   so read the logfile/flag, not a live tail. Don't commit `cache/` (gitignored).
+- **Cloud GPU (RunPod) for #13+:** see **`../RUNPOD.md`**. The whole suite runs via
+  **`prototype/run_all.py`** (model-agnostic, stage-based, layer-looping, idempotent;
+  writes to a per-`(model,layer)` cache tag via `SAE_CACHE_TAG`). #13 targets the
+  paper's **Llama-3.1-8B**. Driver CPU-tested on SmolLM2-135M.
 
 ## Read first
 - **`prototype/STORY.md`** — the narrative arc (Parts 0–VII), reasoning-first.
@@ -48,6 +52,7 @@ parsimony); and the legible axis causally steers the model (~13× a random contr
   parsimony); qualified negative + the coordinate-normalization trade (`--no-coord-norm`).
 - `viz_coord.py` — legibility figures (`cache/viz/`).
 - `steer.py` — causal steering (`cache/steer/`); loads the model via nnsight.
+- `run_all.py` — end-to-end driver for the whole suite (see `../RUNPOD.md`).
 - (repo root) `data.py`, `saes.py`, `train_sae.py`, `subspace_capture.py`.
 
 ## Remaining tasks (work through in this order; reason about WHY before each)

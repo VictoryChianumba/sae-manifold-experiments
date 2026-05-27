@@ -48,7 +48,7 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.neighbors import KNeighborsRegressor
 
-from data import load_manifold_data, CACHE_DIR
+from data import load_manifold_data, CACHE_DIR, D_MODEL
 from saes import BatchTopKSAE, load_sae, get_decoder
 from factored_sae import FactoredSAE, PRIMARY_LABEL
 
@@ -371,7 +371,7 @@ def _sae_greedy_basis(Xtr, mean_m, decoder, N):
 
 def run(manifolds, seeds, coord_dims, maxN, c4_sae_path, headline_N):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    c4_sae = load_sae(c4_sae_path, d_in=576, device="cpu")
+    c4_sae = load_sae(c4_sae_path, d_in=D_MODEL, device="cpu")
     c4_dec = get_decoder(c4_sae)
 
     # results[(manifold, method, N)] -> list of VE over seeds

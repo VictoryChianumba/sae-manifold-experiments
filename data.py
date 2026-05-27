@@ -54,7 +54,15 @@ def _default_device():
 
 
 DEVICE = os.environ.get("SAE_DEVICE", _default_device())
-CACHE_DIR = Path(__file__).parent / "cache"
+
+# Cache is namespaced by an optional tag so different (model, layer) runs don't
+# collide — e.g. SAE_CACHE_TAG=llama31-8b_L19 -> cache/llama31-8b_L19/.  Empty tag
+# (the default) keeps the original flat cache/ layout, so existing runs are
+# unaffected.  All consumers import CACHE_DIR, so every artifact (activations,
+# SAE checkpoints, RESULTS_DIRs) is namespaced consistently.
+_CACHE_TAG = os.environ.get("SAE_CACHE_TAG", "").strip("/")
+_CACHE_BASE = Path(__file__).parent / "cache"
+CACHE_DIR = (_CACHE_BASE / _CACHE_TAG) if _CACHE_TAG else _CACHE_BASE
 
 
 def mpl_colorscale(name, n=11):

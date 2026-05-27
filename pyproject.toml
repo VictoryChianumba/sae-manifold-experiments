@@ -22,6 +22,12 @@ authors = [
     { name = "Ekdeep Singh Lubana" },
 ]
 
+# GPU / RunPod note (see RUNPOD.md): on a Linux CUDA pod do NOT `uv sync` blindly —
+# the resolver can pick a torch build that mismatches the pod's CUDA driver. Launch
+# the pod from a *PyTorch CUDA template* (torch already CUDA-built & driver-matched),
+# then install only the rest WITHOUT touching torch:
+#     pip install nnsight transformers datasets scikit-learn matplotlib tqdm scipy pandas
+# `uv sync` is the right call on the Mac (CPU/MPS) where this lockfile was resolved.
 dependencies = [
     "torch>=2.2",
     "nnsight>=0.3",

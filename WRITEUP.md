@@ -35,6 +35,9 @@ The short version:
   adding a coordinate-parsimony prior *recovers* it — but only on genuinely
   low-dimensional manifolds, and a single global strength over-collapses higher-D
   ones. Qualified positive; adaptivity is the open frontier.
+- **The legible coordinate is causal, not just decodable.** Steering along it moves the
+  model's behaviour monotonically in the concept direction (hot/cold for temperature),
+  ~13× an equal-norm random control — "representation" upgraded to "control."
 
 Throughout, the honest caveat: this is a **toy** (135M model, ~5k points, a research
 SAE, not a scalable one), and we changed the **lens (the SAE), not the model**.
@@ -335,7 +338,46 @@ frontier.**
 
 ---
 
-## 9. What worked, what didn't (at a glance)
+## 9. Part VII — Steering: the coordinate is causal, not just decodable (`steer.py`)
+
+Everything to here shows the coordinate can be *read*. The sharper question — and the
+bonus the project set itself — is whether it is *causal*: if we move along it, does the
+**model's behaviour** follow? This is also the first experiment that touches the model,
+not just the lens.
+
+**Method (activation steering, but the direction comes from our legible coordinate):**
+take the aligned (λ=1) factored SAE, find temperature's dominant chart and its
+**legible axis** ŵ (the unit coordinate direction the held-out label probe maps to the
+label). Build a steering vector `v = std · mean_x[ g_m(z+ŵ) − g_m(z) ]` — the
+activation displacement for one step "warmer." Then add `α·v` to a readout prompt's
+layer-19 last-token activation (add the *delta*, not the lossy full reconstruction),
+run the rest of the model, and read a behavioural contrast: `logit(" hot") −
+logit(" cold")`, averaged over three readout prompts. Sweep α. **Control:** a random
+direction of equal norm.
+
+**Result — a clean causal handle:**
+
+| α (steering strength) | −3 | −2 | −1 | 0 | +1 | +2 | +3 | slope/α |
+|---|---|---|---|---|---|---|---|---|
+| **legible axis**, logit(hot−cold) | −1.33 | −1.13 | −0.88 | −0.63 | −0.46 | −0.17 | +0.04 | **+0.231** |
+| random control (equal norm) | −0.63 | −0.67 | −0.71 | −0.63 | −0.63 | −0.58 | −0.54 | +0.018 |
+
+Steering along the legible temperature coordinate moves the model's hot/cold
+preference **smoothly and monotonically** (and through the crossover from "cold" to
+"hot"), while an equal-norm random direction is essentially flat — a **~13× steeper
+slope** for the concept axis (`cache/steer/steering.png`). So the legible coordinate
+isn't just decodable: pushing on it *causally* steers the model in the concept
+direction. This upgrades the central claim from "representation" to "control."
+
+**Caveats:** one manifold (temperature), one small model, a single seed; the readout is
+a hand-picked contrast pair; and the steering vector is a *mean* linear direction
+(local, not the full nonlinear chart map). A stronger version would sweep multiple
+manifolds/contrasts and compare the legible axis against the *unaligned* coordinate's
+axis, not only a random control.
+
+---
+
+## 10. What worked, what didn't (at a glance)
 
 | Step | Outcome |
 |---|---|
@@ -348,17 +390,19 @@ frontier.**
 | Cyclic alignment (colours) | ✅ Crosses PCA at lam≈1; ⚠️ still hardest manifold |
 | Unsupervised isometry alone | ❌ Negative; arc-length ≠ linear-in-coordinate |
 | Isometry + parsimony | ◐ Qualified positive: works on low-D, over-collapses multi-D |
+| Steering along the legible axis | ✅ Causal: monotone hot/cold shift, ~13× a random control |
 
 ---
 
-## 10. Limitations (read this before believing anything)
+## 11. Limitations (read this before believing anything)
 
 - **Toy scale.** SmolLM2-135M (not Llama-3.1-8B), ~5k points total, manifolds as small
   as 56–199 points. `age` (69 train points) is consistently unreliable; `days` was
-  dropped entirely. Three seeds is few.
-- **We changed the lens, not the model.** All of this re-represents fixed activations
-  with different SAEs/decoders; we never intervened on the model. No causal claim about
-  the model's computation.
+  dropped entirely. Three seeds is few; the steering result is a single seed/manifold.
+- **Mostly we changed the lens, not the model.** Parts I–VI re-represent fixed
+  activations with different SAEs/decoders. Part VII (steering) is the one exception
+  that intervenes on the model — but on one manifold, one contrast pair, one small
+  model, so treat it as a proof-of-concept causal signal, not a general claim.
 - **The factored model is not a scalable SAE.** It has no SAE-style sparsity, trains on
   a tiny curated mixture, and its "router discovers manifolds" property was only
   checked loosely (purity), not rigorously held-out in the fair comparison.
@@ -376,7 +420,7 @@ frontier.**
 
 ---
 
-## 11. The five-point bar — status, and what's left
+## 12. The five-point bar — status, and what's left
 
 The fair-comparison "five-point" requirements are **all met**:
 
@@ -390,18 +434,18 @@ The fair-comparison "five-point" requirements are **all met**:
 
 The broader **"definition of improvement"** bar (a Pareto move on *geometry fidelity ×
 interpretability/parsimony* at matched sparsity & capacity, held-out, ideally on a
-real model, **bonus:** a causal/steering leg) is **partially met**:
+real model, **bonus:** a causal/steering leg) is now **largely met**:
 
 - Geometry fidelity ✅; interpretability ✅ *with* weak supervision, ◐ unsupervised.
+- **Bonus causal/steering leg ✅** — the legible axis causally steers the model
+  (Part VII), ~13× a random control. The remaining gap is breadth (one manifold/seed).
 - "Ideally on a real model" ❌ — still SmolLM2-135M.
-- **Bonus causal/steering leg ❌ — not done.** This is the most visible gap.
 
 **Explicitly still on the list / things we have not yet done:**
 
-1. **Causal / steering leg** (the listed bonus): move along a legible chart coordinate
-   and show a smooth, predictable change in model output. We have a *now-legible*
-   coordinate to try this on — it's the natural next experiment and would turn a
-   "representation" claim into a "control" claim.
+1. ~~**Causal / steering leg**~~ ✅ **Done** (Part VII / `steer.py`) — proof-of-concept
+   on temperature; the breadth version (multiple manifolds/contrasts, and comparing
+   against the *unaligned* axis, not only a random control) is the natural follow-up.
 2. ~~**Coordinate-vs-label visualization.**~~ ✅ **Done** (`viz_coord.py`):
    `cache/viz/coord_vs_label.png` (predicted-vs-true label, unsupervised vs aligned)
    and `cache/viz/colors_circle.png` (the partial hue loop). The diagonal-tightening
@@ -424,7 +468,7 @@ real model, **bonus:** a causal/steering leg) is **partially met**:
 
 ---
 
-## 12. Reproducibility appendix
+## 13. Reproducibility appendix
 
 All commands run from the repo root on CPU with `SAE_DEVICE=cpu SAE_D_MODEL=576`
 (prepend `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19` for anything that
@@ -440,12 +484,14 @@ loads the model).
 | Isometry (unsupervised) | `uv run python prototype/iso_coord.py --seeds 0 1 2 --lams 0 1 3 10 30` | `cache/iso_coord/` |
 | Isometry + parsimony | `uv run python prototype/iso_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-pars 0 2 8` | `cache/iso_parsimony/` |
 | Legibility figures | `uv run python prototype/viz_coord.py` | `cache/viz/` |
+| Steering (loads model) | `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19 uv run python prototype/steer.py` | `cache/steer/` |
 
 **Key files:** `data.py` (manifolds + extraction), `train_sae.py` / `saes.py`
 (standard BatchTopK SAE), `subspace_capture.py` (the paper's metric),
 `prototype/factored_sae.py` (the atlas SAE), `prototype/fair_comparison.py` (the
 fair test + shared eval helpers), `prototype/legible_coord.py`,
-`prototype/iso_coord.py`, `prototype/iso_parsimony.py`. Detailed reproduction notes
+`prototype/iso_coord.py`, `prototype/iso_parsimony.py`, `prototype/viz_coord.py`
+(legibility figures), `prototype/steer.py` (causal steering). Detailed reproduction notes
 in `REPRODUCTION.md`; prototype notes in `prototype/README.md`.
 
 ---

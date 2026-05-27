@@ -268,15 +268,66 @@ Why it fails — and it's instructive:
   nothing about *which* coordinate direction is the concept.
 
 So legibility here is cheap **with** a weak, concept-shaped label prior but not
-recoverable from this label-free isometry prior. Unsupervised legibility remains
-open.
+recoverable from this label-free isometry prior *alone* — which motivated adding
+the missing ingredient below.
+
+## Isometry + parsimony (`iso_parsimony.py`) — label-free, and it works on low-D manifolds
+
+The isometry post-mortem said arc-length is necessary but not sufficient: a 3-D
+isometric coordinate can still *wind*. The fix is to also stop it having spare dims
+to wind in. `iso_parsimony.py` adds a **coordinate-parsimony** prior to isometry,
+both still label-free:
+
+- **parsimony**: minimize the **participation ratio** of the coordinate's per-dim
+  variance, `PR = (Σ vᵢ)² / Σ vᵢ² ∈ [1, cd]` — a *scale-invariant* count of active
+  dims (an L1-on-std penalty can be gamed by shrinking the coord and growing the
+  decoder; PR cannot). Driving PR→1 collapses unused dims; reconstruction keeps the
+  needed ones. We grid over `(lam_iso, lam_pars)` so each prior's marginal effect
+  shows (iso=0 row = parsimony alone; pars=0 row = isometry alone).
+
+### Result — a clean split by intrinsic dimensionality (3 seeds, label-free)
+
+Held-out label R² (R² *not* a training target — no labels used):
+
+| config (iso, pars) | years | temperature | age | geography | colors | active-dims (PR) |
+|---|---|---|---|---|---|---|
+| (0, 0) unsup. | 0.16 | 0.79 | 0.84 | 0.41 | 0.13 | ~2.3 |
+| (0, 8) parsimony | 0.55 | 0.82 | 0.84 | 0.01 | 0.05 | ~1.3 |
+| (1, 8) iso+parsimony | **0.70** | **0.89** | 0.84 | 0.08 | 0.07 | ~1.4 |
+| PCA reference | 0.75 | 0.92 | 0.91 | 0.60 | 0.30 | — |
+
+Parsimony does exactly what it says — the held-out coordinate's active-dim count
+(PR) collapses from ~2.3 toward 1 — and the effect on legibility is **cleanly split
+by the manifold's intrinsic dimension**:
+
+- **It works, label-free, on the genuinely low-D manifolds.** Years (a helix that
+  is ~1-D in arc length) jumps **0.16 → 0.70** and temperature **0.79 → 0.89** —
+  both now near their PCA reference (0.75 / 0.92), and years is in the
+  neighbourhood of the *supervised* result (0.89). This is the first time the
+  unsupervised route recovered real legibility: collapse the spare dims, make the
+  survivor arc-length, and a clean 1-D concept lines up linearly **with no labels**.
+- **It backfires on the intrinsically multi-D manifolds.** A single global parsimony
+  weight over-collapses geography (~2-3D on the sphere: 0.41 → 0.01) and colors (a
+  2-D cyclic loop: → 0.07), destroying both their legibility *and* their VE — you
+  cannot force a sphere onto one straight axis.
+- **So the aggregate is flat** (non-cyclic mean R² ~0.55 → ~0.63, within seed noise)
+  because the low-D gains and multi-D losses cancel, and VE drops overall as
+  parsimony bites (0.68 → ~0.53 at `pars = 8`).
+
+**Verdict — a qualified positive.** Parsimony *was* the missing ingredient the
+isometry post-mortem predicted: with it, label-free legibility is genuinely
+recoverable, but only when the parsimony strength matches the manifold's intrinsic
+dimension. A global weight can't know that, so it helps 1-D manifolds and harms
+higher-D ones. The clear next step is an **intrinsic-dimension-adaptive** parsimony
+(let each chart learn how many coordinate dims it needs) rather than one global knob.
 
 ## Possible next steps
 
-- **Unsupervised legibility, take two**: arc-length alone is insufficient — pair
-  isometry with a *coordinate-parsimony* prior (use as few coordinate dims as the
-  manifold needs) so the legible axis is forced to be low-dimensional and straight;
-  or a proper isometric-AE (exact Jacobian + encoder pseudo-inverse term) rather than
+- **Intrinsic-dimension-adaptive parsimony**: a per-chart learned/annealed target
+  dimensionality (or a nested/Matryoshka coordinate with a per-dim KL gate) so each
+  manifold keeps exactly the dims it needs — fixing the over-collapse of geography/
+  colors while keeping the years/temperature win.
+- A proper isometric-AE (exact Jacobian + encoder pseudo-inverse term) rather than
   the finite-difference surrogate here.
 - A **causal/steering** leg: move along a (now-legible) chart coordinate → smooth
   predicted-output change.

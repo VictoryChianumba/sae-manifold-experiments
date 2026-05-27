@@ -1,90 +1,63 @@
 # Next session handoff — goodfire SAE-manifold project
 
-## Where we are
-- **Project dir:** `~/Documents/goodfire` (moved off `~/Desktop` — macOS TCC was
-  denying Desktop access mid-session; `~/Documents` is fine).
-- **Git:** branch **`prototype/factored-manifold-sae`**. `main` = clean reproduction
-  checkpoint (commit `c0cfdcc`). **No remote** (removed upstream
-  `origin → goodfire-ai/sae-manifold` to avoid accidental push; upstream commits kept
-  for provenance).
-- **Env / how to run:** `uv` venv in the repo. Run from repo root as
-  `uv run python ...`, **always CPU** (MPS topk is pathologically slow), with prefix:
-  `SAE_DEVICE=cpu SAE_D_MODEL=576` (add `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M
-  SAE_LAYER=19` for anything that loads the model).
+## How to run
+- **Project dir:** `~/Documents/goodfire`. **Branch:** `prototype/factored-manifold-sae`
+  (`main` = clean reproduction checkpoint; **no remote**).
+- **Always CPU** (MPS topk pathologically slow). Prefix: `SAE_DEVICE=cpu SAE_D_MODEL=576`.
+  Add `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19` for anything that loads
+  the model (e.g. `steer.py`). Run from repo root as `uv run python ...`.
+- Background jobs: `nohup` + logfile + a `cache/.done` flag; prints are block-buffered
+  so read the logfile/flag, not a live tail. Don't commit `cache/` (gitignored).
 
-## Project in one paragraph
-Scaled-down local reproduction of Goodfire *Do SAEs Capture Concept Manifolds?*
-(arXiv 2604.28119). Substituted **SmolLM2-135M** (LlamaForCausalLM, d=576, layer 19)
-for Llama-3.1-8B (8B won't fit in 8 GB RAM). Reproduced the core finding — SAEs
-shatter/dilute curved concept manifolds (years/helix: SAE codes plateau ~17% vs PCA
-~94% at 16 dims). Built 3D manifold visualizations, a sparsity sweep, and clustering,
-then prototyped a manifold-native SAE.
+## Read first
+- **`prototype/STORY.md`** — the narrative arc (Parts 0–VII), reasoning-first.
+- **`WRITEUP.md`** (repo root) — the detailed living log / blog resource (numbers,
+  tables, limitations, the five-point bar status, reproducibility appendix).
+- The **goodfire project memory** (auto-loaded) — current state + gotchas.
 
-## Files
-- `data.py` — env-configurable model/layer/d_model/device; concept-manifold extraction.
-- `saes.py` — inference-only BatchTopK SAE + `load_sae`.
-- `train_sae.py` — BatchTopK SAE **trainer** (the missing half of upstream).
-- `subspace_capture.py` — `find_support_greedy` / `find_support_greedy_codes`; VE + tuning curves.
-- `compare_sparsity.py` — k=16/32/64 sweep plot.
-- `manifold_viz.py` — article-style 3D PCA manifold figures.
-- `prototype/factored_sae.py` — **FactoredSAE**: softmax router over M charts +
-  per-chart coordinate encoder + per-chart decoder (nonlinear; `--linear-charts`,
-  `--coord-dim` flags). Trains on a mixture of cached manifolds. Eval = router purity
-  + `coord→label R²`.
-- `prototype/README.md` — prototype writeup + ablation ladder.
-- `REPRODUCTION.md` — full writeup incl. the county/globe analogy.
+## State (2026-05-27)
+Parts I–VII **done** (reproduction → atlas SAE → fair comparison → supervised+cyclic
+legibility → unsupervised isometry/parsimony → causal steering). Tasks **#10
+(coord-vs-label viz)** and **#11 (causal/steering leg)** done. The five-point fair-
+comparison bar is fully met; the broader "improvement" bar is largely met (fidelity ✅,
+interpretability ✅ supervised / ◐ unsupervised, steering ✅; **real-model ❌**).
 
-## Cached artifacts (`cache/`, gitignored)
-Manifolds `years age temperature days colors geography` (.pt);
-`background_acts_40000.dat`; SAEs `sae_4608_k16/k32/k64.pt` (BatchTopK, d_sae=4608);
-figures in `cache/subspace_capture/png/` and `cache/manifold_viz/`.
+Headline: a curved factored SAE beats the PCA linear ceiling on curved manifolds; a
+weak concept-shaped label prior makes its coordinate legible at ~zero fidelity cost
+(incl. cyclic colours); label-free legibility works only on low-D manifolds (iso+
+parsimony); and the legible axis causally steers the model (~13× a random control).
 
-## Where the prototype landed — BE SKEPTICAL
-Factored SAE ablation ladder (`coord→label R²`):
-- **1 ray** (SAE-like): age 0.08, temp 0.01 — geometry NOT recovered (recon VE 0.978)
-- **3-D subspace** (linear): age 0.72, temp 0.78
-- **3-D curved** (nonlinear): age 0.95, temp 0.86 (recon VE 0.996)
+## Files (prototype/)
+- `factored_sae.py` — the atlas SAE (router + per-chart coord + curved decoder).
+- `fair_comparison.py` — the fair test + **shared eval helpers** (`load_split`,
+  `factored_eval`, `label_score` incl. cyclic, `_pca_basis`, `CYCLIC_LABEL`, `_ms`).
+- `legible_coord.py` — supervised label-alignment sweep (concept-shaped, incl. cyclic).
+- `iso_coord.py` — unsupervised isometry (negative).
+- `iso_parsimony.py` — isometry + participation-ratio parsimony (qualified positive).
+- `viz_coord.py` — legibility figures (`cache/viz/`).
+- `steer.py` — causal steering (`cache/steer/`); loads the model via nnsight.
+- (repo root) `data.py`, `saes.py`, `train_sae.py`, `subspace_capture.py`.
 
-This is **suggestive, NOT a demonstrated improvement.** Confounds:
-1. coord_dim 1 vs 3 = **capacity confound** (3 predictors trivially beat 1).
-2. R² is **in-sample** (fit & scored on same points) → inflates higher-capacity models.
-3. The "1-ray" config is **not a real standard SAE** (still has router + curated data).
-4. Single seed, ~5.4k points, tiny 135M model; `years` splits across charts.
-Only fairer signal so far: 3-D linear vs 3-D nonlinear (same coord dim) → curvature
-helps (age 0.72→0.95). Also note: we changed the **SAE (the lens)**, not the model;
-and the main lever (subspace-per-cluster) is just the paper's own remedy
-operationalized — low novelty.
+## Remaining tasks (work through in this order; reason about WHY before each)
+- **#12 Intrinsic-dimension-adaptive parsimony (NEXT).** iso+parsimony recovered
+  label-free legibility on low-D manifolds but a single global weight over-collapsed
+  multi-D ones (geography, colours). Let each chart learn how many coord dims it needs
+  (per-chart learned/annealed target, or a Matryoshka/nested coordinate with per-dim
+  gates) → keep the years/temperature win without killing geography/colours.
+- **#13 Real-model validation.** Biggest external-validity threat (everything is 135M).
+  Re-run the core fair comparison on a larger model / more layers.
+- **#14 In-the-wild router.** Train the factored model on *background* activations (not
+  the curated mixture) and test whether charts discover the manifolds unsupervised —
+  validates the "router = learned feature clustering" claim that's asserted, not shown.
+- **#15 Group-sparse top-k chart selection.** Replace soft softmax with top-k → a more
+  honest, genuinely-sparse SAE-like object; check fidelity/legibility survive.
+- **#16 Proper isometric-AE.** Exact Jacobian + encoder pseudo-inverse term (Gropp) vs
+  the finite-difference surrogate — give isometry its fairest shot. Lower priority.
+- **#17 Statistical rigor.** More seeds + CIs; augment/replace the smallest manifolds
+  (age=69 train pts; days dropped). Do last, once the method set is frozen.
 
-## ITEM ONE — the fair-comparison experiment (the next task)
-**Question:** does the factored/curved SAE actually recover concept-manifold geometry
-better than a matched standard SAE — or is the hint an artifact?
-
-**Requirements:**
-- (a) A **real standard SAE baseline** in the same harness/data (not the pseudo
-  "1-ray" config).
-- (b) **Held-out** evaluation (train/test split per manifold) — kills in-sample inflation.
-- (c) **Fixed coordinate dimensionality** across conditions so curvature
-  (linear vs nonlinear charts) is the only variable.
-- (d) Use the paper's **subspace-capture** metric as the architecture-agnostic
-  yardstick (held-out manifold variance explained by N selected directions/dims),
-  so SAE and factored-SAE compare at matched N.
-- (e) A couple of **seeds**.
-
-**Definition of "improvement" (the bar):** a Pareto move on
-**(geometry fidelity) × (interpretability / parsimony)** at **matched sparsity &
-capacity**, held-out, ideally on a real model — bonus: a **causal/steering** leg (move
-along the coordinate → smooth predicted output change). **Reconstruction alone is NOT
-the scoreboard** (that's the paper's whole point).
-
-**First design decision:** pick the exact common metric for SAE vs factored-SAE.
-Candidates: held-out subspace-capture variance-explained at matched #dims; or held-out
-label-decodability at matched latent dims. Decide, get sign-off, then implement + run.
-
-**Be willing to report a NEGATIVE result — it's equally informative.**
-
-## Gotchas
-- Run from repo root; prefix env vars; CPU only.
-- Don't commit `cache/`, `.venv/`, `.claude/` (gitignored); `uv.lock` IS tracked.
-- Keep work on the prototype branch; `main` stays the clean checkpoint.
-- Background jobs: `nohup` + logfile; tail pipes buffer (read the logfile directly);
-  MPS warms up slow then ~400 tok/s.
+## Working agreement (how we run this project)
+- Reason about **why** we add each item before building it; keep the full picture.
+- Run on CPU; be **honest about negative results** (they're equally informative).
+- After each task: update `WRITEUP.md` (and `STORY.md` if the arc changes), update the
+  project memory, and **commit** on the prototype branch.

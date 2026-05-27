@@ -248,6 +248,12 @@ weak prior removes it. Push too hard (`lam = 10`) and a real tradeoff reappears 
 erodes). **Caveat:** this uses *weak label supervision* — fine for "probe a known
 concept," not for unsupervised discovery.
 
+**What it looks like** (`viz_coord.py` → `cache/viz/coord_vs_label.png`): plotting
+the held-out probe's *predicted* label against the *true* label makes the R² concrete
+— the unsupervised coordinate is a scattered cloud (years R²≈0.04), the weakly-aligned
+one snaps to a tight diagonal (years 0.86, temperature 1.00, geography 0.79). The
+number wasn't hiding anything; the coordinate genuinely straightens.
+
 ### 7.2 Cyclic concepts: scoring then alignment
 
 Colours are labelled by **hue**, which wraps (0.99 and 0.01 are both red).
@@ -265,7 +271,9 @@ Colours are labelled by **hue**, which wraps (0.99 and 0.01 are both red).
 
 **Residue:** colours is still the hardest manifold in absolute terms (R² ~0.4–0.5 vs
 ~0.9 for years/geography) — hue is entangled with lightness/saturation over ~1.8k
-noisy points.
+noisy points. The figure `cache/viz/colors_circle.png` shows this honestly: even
+strong cyclic alignment forms only a *partial* hue loop in the predicted (cos, sin)
+plane, not the clean rainbow circle the clean manifolds would give.
 
 ---
 
@@ -394,10 +402,10 @@ real model, **bonus:** a causal/steering leg) is **partially met**:
    and show a smooth, predictable change in model output. We have a *now-legible*
    coordinate to try this on — it's the natural next experiment and would turn a
    "representation" claim into a "control" claim.
-2. **Coordinate-vs-label visualization.** The original plan deferred a viz of a chart's
-   coordinate against its label until we had real signal. We have the signal now but
-   never made the figure — and a blog needs pictures (we do have the VE-curve and
-   Pareto plots, but not the "colour the manifold by coordinate" view).
+2. ~~**Coordinate-vs-label visualization.**~~ ✅ **Done** (`viz_coord.py`):
+   `cache/viz/coord_vs_label.png` (predicted-vs-true label, unsupervised vs aligned)
+   and `cache/viz/colors_circle.png` (the partial hue loop). The diagonal-tightening
+   makes the legibility claim falsifiable at a glance.
 3. **Intrinsic-dimension-adaptive parsimony** (per-chart learned dim, or a
    Matryoshka/nested coordinate with per-dim gates) — to fix the over-collapse of
    geography/colours while keeping the years/temperature win.
@@ -431,6 +439,7 @@ loads the model).
 | Legible coordinate (supervised) | `uv run python prototype/legible_coord.py --seeds 0 1 2 --lams 0 0.3 1 3 10` | `cache/legible_coord/` |
 | Isometry (unsupervised) | `uv run python prototype/iso_coord.py --seeds 0 1 2 --lams 0 1 3 10 30` | `cache/iso_coord/` |
 | Isometry + parsimony | `uv run python prototype/iso_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-pars 0 2 8` | `cache/iso_parsimony/` |
+| Legibility figures | `uv run python prototype/viz_coord.py` | `cache/viz/` |
 
 **Key files:** `data.py` (manifolds + extraction), `train_sae.py` / `saes.py`
 (standard BatchTopK SAE), `subspace_capture.py` (the paper's metric),

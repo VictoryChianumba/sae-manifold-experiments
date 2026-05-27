@@ -39,11 +39,20 @@ runpodctl receive <code>
 mkdir -p goodfire && tar xzf goodfire-code.tgz -C goodfire && cd goodfire
 ```
 
-**Alternative — `rsync` over SSH** (best for repeated edit→run loops; add your Mac's
-public key in the RunPod console first):
+**Alternative — `rsync` over SSH** (best for repeated edit→run loops). Two gotchas,
+both learned live:
+1. Register your public key in the RunPod console **before creating the pod** (keys are
+   injected at pod creation, not retroactively), and use **"SSH over exposed TCP"** (a
+   real `sshd` on a public IP+port) — RunPod's `ssh.runpod.io` *proxy* does **not**
+   support rsync/scp. If your key has a passphrase, load it once with
+   `ssh-add ~/.ssh/id_ed25519` so rsync can authenticate non-interactively.
+2. `/workspace` is a network FS that forbids `chown`/`chmod`, so plain `rsync -a` dies
+   with `chown … Operation not permitted`. Drop ownership/perm preservation:
 ```bash
-rsync -avz --exclude cache --exclude .venv --exclude .git \
-  ~/Documents/goodfire/ root@<pod-ip>:<port>/workspace/goodfire/
+rsync -rlvz --no-perms --no-owner --no-group \
+  -e "ssh -p <PORT> -o StrictHostKeyChecking=accept-new -i ~/.ssh/id_ed25519" \
+  --exclude cache --exclude .venv --exclude .git --exclude __pycache__ --exclude .DS_Store \
+  ~/Documents/goodfire/ root@<IP>:/workspace/goodfire/
 ```
 
 ## 2. Environment on the pod

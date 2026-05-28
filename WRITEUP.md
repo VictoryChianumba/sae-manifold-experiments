@@ -227,6 +227,17 @@ next thread.
 
 ## 7. Part V — Making the coordinate legible
 
+**A framing note (added after Part VIII):** the motivation for this Part is
+small-model-specific in *degree* but not in *mechanism*. At 135M (the scale of
+this section), PCA's held-out label R² is only 0.38 on colours and 0.67 on
+geography — the linear coordinate is legible-in-principle but readable-in-practice
+only with help, so weak label supervision is doing real *rescue* work. At
+real-model scale (Llama-3.1-8B, §9b.2 / §9b.6) PCA's R² rises to 0.86–0.99
+across all five concepts and the same mechanism becomes a *refinement* of an
+already-readable baseline rather than a rescue. The lever below — a weak per-
+manifold probe orienting the chart's coordinate at flat VE — is identical; what
+shrinks at scale is the gap it has to close.
+
 ### 7.1 Weak label alignment (`legible_coord.py`)
 
 Hypothesis: the unsupervised coordinate is free to *bend arbitrarily* through
@@ -333,8 +344,8 @@ by intrinsic dimension**:
 
 **Verdict:** parsimony *was* the missing ingredient the isometry post-mortem
 predicted — but its strength must match the manifold's intrinsic dimension, which a
-global knob can't know. **Intrinsic-dimension-adaptive parsimony is the open
-frontier.**
+global knob can't know. **Intrinsic-dimension-adaptive parsimony is the next test**
+(§8.3 below); §9b.4 confirms the same low-D/multi-D split holds at 8B.
 
 ### 8.3 Intrinsic-dimension-adaptive parsimony (`adaptive_parsimony.py`) — a qualified negative
 
@@ -400,7 +411,11 @@ open**: the cleanest unsupervised lever we found (coordinate normalization) is a
 fidelity↔legibility *trade*, and the supervised concept-shaped prior (Part V) remains
 the only route that buys legibility at ~zero reconstruction cost. The honest read is
 that "match parsimony to intrinsic dimension" needs a setting where the manifolds
-*are* genuinely multi-D — which points back at real-model validation (#13).
+*are* genuinely multi-D — and §9b.5 now closes that escape hatch: at 8B with much
+cleaner geometry the gates *still* close uniformly with no per-manifold
+differentiation. The qualified negative is **a cost-shape limit, not a scale
+artefact**. A proper fix needs different machinery (group sparsity over dims,
+per-manifold dim budget, or a different prior); see §12.
 
 ---
 

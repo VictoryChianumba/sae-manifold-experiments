@@ -108,6 +108,9 @@ def run_stage(name, argv, env, logdir):
 
 
 def main():
+    # Line-buffer stdout so progress in `cache/run_all.out` appears in real time
+    # even when the driver is invoked via `nohup` (which otherwise block-buffers).
+    sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--layers", nargs="+", type=int, default=None,

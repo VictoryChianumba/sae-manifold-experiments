@@ -121,15 +121,27 @@ def sae_geometric_curve(Xtr, Xte, mean_m, decoder, maxN):
     At each step pick the decoder atom that most reduces the centered TRAIN
     residual, then measure VE on TEST through the orthonormal basis of all
     atoms selected so far.  A linear N-subspace, hence <= PCA-N.
+
+    Math is unchanged from the original numpy implementation; the hot matmul
+    (``residual @ decoder.T``, [n_pts, d_in] @ [d_in, d_sae]) and the residual
+    update run on DEVICE (GPU on the pod) because they dominate post-training
+    wall time at d_in=4096, d_sae=32768.  SVD on the tiny selected-subset stays
+    on CPU.
     """
-    Xc_tr = Xtr - mean_m
-    Xc_te = Xte - mean_m
-    d_norms_sq = (decoder ** 2).sum(1).clip(1e-10)
-    alive = d_norms_sq > 1e-10
-    selected, curve, residual = [], [], Xc_tr.copy()
+    dev = DEVICE
+    D_t = torch.from_numpy(decoder).float().to(dev)              # [d_sae, d_in]
+    Xc_tr = torch.from_numpy(Xtr - mean_m).float().to(dev)
+    Xc_te = torch.from_numpy(Xte - mean_m).float().to(dev)
+    mean_m_t = torch.from_numpy(mean_m).float().to(dev)
+    d_norms_sq_t = (D_t ** 2).sum(1).clamp_min(1e-10)
+    alive = (d_norms_sq_t > 1e-10).cpu().numpy()
+    residual = Xc_tr.clone()
+    selected, curve = [], []
     for _ in range(maxN):
-        proj = residual @ decoder.T
-        scores = (proj ** 2).sum(0) / d_norms_sq
+        with torch.no_grad():
+            proj = residual @ D_t.T                              # [n_tr, d_sae]
+            scores_t = (proj ** 2).sum(0) / d_norms_sq_t
+        scores = scores_t.cpu().numpy()
         scores[~alive] = -np.inf
         for i in selected:
             scores[i] = -np.inf
@@ -138,9 +150,10 @@ def sae_geometric_curve(Xtr, Xte, mean_m, decoder, maxN):
             curve.append(curve[-1] if curve else 0.0); continue
         selected.append(best)
         _, s, Vt = np.linalg.svd(decoder[selected], full_matrices=False)
-        B = Vt[s > 1e-8]
-        residual = Xc_tr - (Xc_tr @ B.T) @ B
-        Xhat = mean_m + (Xc_te @ B.T) @ B
+        B = torch.from_numpy(Vt[s > 1e-8]).float().to(dev)
+        with torch.no_grad():
+            residual = Xc_tr - (Xc_tr @ B.T) @ B
+            Xhat = (mean_m_t + (Xc_te @ B.T) @ B).cpu().numpy()
         curve.append(_ve(Xte, Xhat, mean_m))
     while len(curve) < maxN:
         curve.append(curve[-1] if curve else 0.0)
@@ -153,34 +166,51 @@ def sae_statistical_curve(sae, Xtr, Xte, mean_m, maxN):
     Select features greedily by train-residual reduction; reconstruct test from
     the selected features' centered contributions (z_i - <z_i>_train) d_i.
     Not a subspace, so this is what the SAE *really represents*, not a ceiling.
+
+    GPU-accelerated for the encoding and the hot greedy matmuls (the same
+    [n_pts, d_in] @ [d_in, d_cand~30k] that bottlenecked the post-training
+    analysis at 8B scale).  Math is unchanged.
     """
+    dev = DEVICE
+    sae.to(dev)
     with torch.no_grad():
-        Ztr = sae.encode(torch.from_numpy(Xtr)).cpu().numpy().astype(np.float32)
-        Zte = sae.encode(torch.from_numpy(Xte)).cpu().numpy().astype(np.float32)
+        Xtr_t = torch.from_numpy(Xtr).float().to(dev)
+        Xte_t = torch.from_numpy(Xte).float().to(dev)
+        Ztr_full = sae.encode(Xtr_t).float()
+        Zte_full = sae.encode(Xte_t).float()
     decoder = get_decoder(sae)
-    cand = np.where((Ztr > 0).any(0))[0]
-    if len(cand) == 0:
+    sae.cpu()
+    cand_mask = (Ztr_full > 0).any(0)                            # [d_sae]
+    cand_idx = cand_mask.nonzero(as_tuple=False).squeeze(-1)     # [n_cand]
+    if cand_idx.numel() == 0:
         return np.zeros(maxN)
-    zmean = Ztr[:, cand].mean(0)
-    Ztr_c = Ztr[:, cand] - zmean
-    Zte_c = Zte[:, cand] - zmean
-    D = decoder[cand]
-    Xc_tr = Xtr - mean_m
-    res = Xc_tr.copy()
-    sel, curve = [], []
+    Ztr_cand = Ztr_full[:, cand_idx]                             # [Ntr, n_cand]
+    Zte_cand = Zte_full[:, cand_idx]
+    D = torch.from_numpy(decoder).float().to(dev)[cand_idx]      # [n_cand, d_in]
+    zmean = Ztr_cand.mean(0)
+    Ztr_c = Ztr_cand - zmean
+    Zte_c = Zte_cand - zmean
+    Xc_tr = torch.from_numpy(Xtr - mean_m).float().to(dev)
+    mean_m_t = torch.from_numpy(mean_m).float().to(dev)
+    res = Xc_tr.clone()
     contrib_ss = (Ztr_c ** 2).sum(0) * (D ** 2).sum(1)
-    alive = np.ones(len(cand), bool)
+    n_cand = cand_idx.numel()
+    alive = torch.ones(n_cand, dtype=torch.bool, device=dev)
+    sel, curve = [], []
     for _ in range(maxN):
-        cross = (res @ D.T) * Ztr_c
-        scores = 2 * cross.sum(0) - contrib_ss
-        scores[~alive] = -np.inf
-        best = int(np.argmax(scores))
-        if not np.isfinite(scores[best]) or scores[best] <= 0:
+        with torch.no_grad():
+            cross = (res @ D.T) * Ztr_c                          # [Ntr, n_cand]
+            scores = 2 * cross.sum(0) - contrib_ss
+            scores = torch.where(alive, scores, torch.full_like(scores, float('-inf')))
+        scores_np = scores.cpu().numpy()
+        best = int(np.argmax(scores_np))
+        if not np.isfinite(scores_np[best]) or scores_np[best] <= 0:
             curve.append(curve[-1] if curve else 0.0); continue
         sel.append(best); alive[best] = False
-        S = np.array(sel)
-        res = Xc_tr - Ztr_c[:, S] @ D[S]
-        Xhat = mean_m + Zte_c[:, S] @ D[S]
+        S = torch.tensor(sel, dtype=torch.long, device=dev)
+        with torch.no_grad():
+            res = Xc_tr - Ztr_c[:, S] @ D[S]
+            Xhat = (mean_m_t + Zte_c[:, S] @ D[S]).cpu().numpy()
         curve.append(_ve(Xte, Xhat, mean_m))
     while len(curve) < maxN:
         curve.append(curve[-1] if curve else 0.0)
@@ -356,19 +386,30 @@ def _pca_basis(Xtr, mean_m, N):
 
 
 def _sae_greedy_basis(Xtr, mean_m, decoder, N):
-    """The N-dim orthonormal basis the geometric greedy selects (on train)."""
-    Xc = Xtr - mean_m
-    d_norms_sq = (decoder ** 2).sum(1).clip(1e-10)
-    sel, residual = [], Xc.copy()
+    """The N-dim orthonormal basis the geometric greedy selects (on train).
+
+    Same hot ``residual @ decoder.T`` matmul as sae_geometric_curve — ported to
+    DEVICE for consistency at the 8B scale.
+    """
+    dev = DEVICE
+    D_t = torch.from_numpy(decoder).float().to(dev)
+    Xc = torch.from_numpy(Xtr - mean_m).float().to(dev)
+    d_norms_sq_t = (D_t ** 2).sum(1).clamp_min(1e-10)
+    sel = []
+    residual = Xc.clone()
     for _ in range(N):
-        scores = ((residual @ decoder.T) ** 2).sum(0) / d_norms_sq
+        with torch.no_grad():
+            scores_t = ((residual @ D_t.T) ** 2).sum(0) / d_norms_sq_t
+        scores = scores_t.cpu().numpy()
         for i in sel:
             scores[i] = -np.inf
         sel.append(int(np.argmax(scores)))
         _, s, Vt = np.linalg.svd(decoder[sel], full_matrices=False)
-        B = Vt[s > 1e-8]
-        residual = Xc - (Xc @ B.T) @ B
-    return B
+        B_np = Vt[s > 1e-8]
+        B = torch.from_numpy(B_np).float().to(dev)
+        with torch.no_grad():
+            residual = Xc - (Xc @ B.T) @ B
+    return B_np
 
 
 # ── Driver ────────────────────────────────────────────────────────────────────

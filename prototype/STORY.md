@@ -116,39 +116,57 @@ not discovery.)
   intrinsic dim" needs a setting where the manifolds are genuinely multi-D — pointing
   back at real-model validation.*
 
-## Part VII — Is the coordinate causal? (steering)
+## Part VII — Is the coordinate causal? (steering — 135M)
 
 The sharpest test, and the first to touch the **model**. Built a steering vector from
 the legible temperature axis, added `α·v` to a readout prompt's layer-19 activation,
-read `logit(" hot")−logit(" cold")`. **A clean causal handle** — the contrast moves
-monotonically through the cold→hot crossover (slope +0.231/α), while an equal-norm
-**random control** is flat (slope +0.018, ~13× weaker). The legible coordinate isn't
-just decodable — pushing on it *steers the model*. "Representation" → "control."
+read `logit(" hot")−logit(" cold")`. **A clean causal handle at 135M** — the
+contrast moves monotonically *through* the cold→hot crossover (slope +0.231/α,
+range −1.33 → +0.04 across α∈[−3,+3], so the model's preferred token actually
+flips), while an equal-norm **random control** is flat (slope +0.018, ~13×
+weaker). At 135M the legible coordinate is a control handle. (§9b.7 below shows
+this does *not* fully carry to 8B — read this section as the 135M proof-of-
+concept, not a general result.)
 
 ## Part VIII — Real model (Llama-3.1-8B)
 
 The acid test for which of the small-model findings were real and which were
-artefacts. Run via `run_all.py` on RunPod A100, layer 16, 3 seeds. Most held;
-two reframed; one strengthened the central claim.
+artefacts. Run via `run_all.py` on RunPod A100, layer 16, 3 seeds. The headline
+fair-comparison VE-vs-N result (§9b.1) holds cleanly; the legibility /
+parsimony / steering legs need more care.
 
-**Strengthened.** Curvature-beats-flat is now bulletproof — `factored-LIN`
-collapses to −0.02 mean VE@3 at 8B (vs +0.15 at 135M), so the factored-NL win
-is curvature, not parameter slack. Shattering ratio over PCA jumps ~9× → ~14×.
+**Held up cleanly (§9b.1).** Curvature-beats-flat is now bulletproof —
+`factored-LIN` collapses to −0.02 mean VE@3 at 8B (vs +0.15 at 135M), so the
+factored-NL win is curvature, not parameter slack. Shattering ratio over PCA
+jumps ~9× → ~14×. **This is the one 8B result we lean on.**
 
-**Reframed.** (1) Part V was sold as "PCA can't read concepts so we need labels."
-At 8B, PCA's label R² is **0.86–0.99 across all five concepts** — supervision is
-now a *refinement* of an already-readable baseline, not a rescue. Mechanism
-unchanged; gap to close is smaller. (2) Adaptive parsimony's "scale fixes it"
-hedge is dead — gates close uniformly at 8B too, so it's a cost-shape limit, not
-a small-model artefact.
+**Reframed framing-only (§9b.2 / §9b.6).** Part V was sold as "PCA can't read
+concepts so we need labels." At 8B, PCA's label R² is 0.86–0.99 across all
+five concepts — supervision becomes a *refinement* of an already-readable
+baseline, not a rescue. Mechanism unchanged; motivating gap smaller.
 
-**Steering re-runs at 8B (§9b.7).** Same recipe on Llama-3.1-8B layer 16, one
-seed, one manifold (temperature). Slope +0.090/α — **strictly monotone**, ~6× a
-flat random control. Mechanism survives; magnitude drops ~2.5× (from +0.231 at
-135M). Most-supported reading mirrors the legibility reframing: temperature is
-already nearly linearly readable at 8B (PCA R² 0.99), so the curved axis IS
-causal but not exceptionally so over random directions. Honest dilution of the
-"13×" framing.
+**Reframed honestly — earlier draft overclaimed (§9b.3–5 + §9b.7).**
+The Pareto plots from `legible_coord`, `iso_parsimony`, and `adaptive_parsimony`
+at 8B sit inside narrow noise bands (label R² already saturated, factored
+VE@3 ranges 0.05–0.10 wide); 3 seeds is not enough to confidently distinguish
+"the lever moved" from "seed-luck." Row-by-row claims softened with a
+noise-floor caveat. The mechanical "gates close roughly uniformly" reading of
+adaptive parsimony survives; "scale doesn't fix legibility" needs more seeds.
+
+**Steering re-run at 8B is modulation, not control (§9b.7).** Same recipe,
+one seed/manifold. Slope **+0.090/α**, strictly monotone, **~6× a flat random
+control** — but `logit(hot−cold)` stayed −1.31 → −0.79 across α∈[−3,+3], **never
+crossed zero**. At 135M the same recipe went −1.33 → +0.04 — actually flipping
+the model's preferred token. So the qualitative content of "the legible
+coordinate steers the model" is split by scale: control at 135M, modulation
+only at 8B. An earlier draft of this section read "qualitatively replicates";
+that was too charitable. Honest version: monotone causal effect above random,
+but no demonstrated behavioural switch at 8B.
+
+**Anchor pending.** Before leaning further on any of the 8B numbers we should
+replicate one Goodfire-paper figure at 8B (`subspace_capture.py` for Fig 4 /
+`manifold_viz.py` for Fig 1) as a sanity anchor — to confirm the pipeline
+produces the paper's numbers on the paper's model. Cheap; not yet run.
 
 ---
 
@@ -156,20 +174,27 @@ causal but not exceptionally so over random directions. Honest dilution of the
 
 | Question | Answer | Strength |
 |---|---|---|
-| Curved SAE → better fidelity? | **Yes**, beats the PCA linear ceiling on curved manifolds; **cleaner at 8B** (factored-LIN collapses) | Strong (3 seeds, held-out, matched dim, two scales) |
-| …interpretable coordinate? | **Yes with weak supervision** (incl. cyclic); ◐ label-free only on low-D; at 8B the gap PCA leaves is smaller | Strong supervised / partial unsupervised |
-| …causally a control handle? | **Yes at two scales**, ~13× rand. control at 135M, ~6× at 8B (monotone both times) | Proof-of-concept, two scales × 1 manifold/seed |
+| Curved SAE → better fidelity? | **Yes**, beats the PCA linear ceiling on curved manifolds; **cleaner at 8B** (factored-LIN collapses; geography +0.42, years +0.09 over PCA at coord_dim=3) | **Strong** (3 seeds, held-out, matched dim, two scales) |
+| …interpretable coordinate? | **Yes with weak supervision** at 135M (incl. cyclic); ◐ label-free only on low-D at 135M; **at 8B inside a noise band** — 3 seeds, narrow R²/VE ranges (§9b.3 caveat) | Strong at 135M / **inconclusive at 8B until more seeds** |
+| …causally a control handle? | At 135M ✅ control (sweep crosses decision boundary, ~13× random); at 8B ◐ modulation only (~6× random, monotone, but boundary not crossed in α∈[−3,+3]) | **Proof-of-concept; split by scale** |
 
-**One-line story:** *a curved, factored SAE captures concept manifolds that a standard
-SAE shatters, and — once you orient its coordinate — that coordinate is both a
-legible readout and a causal control, on a small model **and** on Llama-3.1-8B (with
-caveats noted in Part VIII).*
+**One-line story:** *a curved, factored SAE captures concept manifolds that a
+standard SAE shatters — strongly at both 135M and 8B (§9b.1 is the cleanest
+8B result). Once you orient its coordinate at 135M, that coordinate is both a
+legible readout and a causal control. The same orientation step at 8B is
+inside a 3-seed noise band on the readout side and modulates-but-does-not-flip
+the model on the steering side. The shattering / curvature-wins findings
+transfer cleanly; the legibility / control findings do not yet.*
 
-**Standing limitations:** still toy by some axes — `age`/`days` too small, 3 seeds at
-8B, one layer, one contrast pair / one manifold for steering at each scale;
-"matched dimensionality" isn't fully "matched capacity"; the legibility wins lean
-on weak supervision.
+**Standing limitations:** still toy by some axes — `age`/`days` too small, 3
+seeds at 8B, one layer, one contrast pair / one manifold for steering at each
+scale; the **8B Pareto plots are noisy enough that row-level claims should not
+be cited**; "matched dimensionality" isn't fully "matched capacity"; the
+legibility wins lean on weak supervision; the 8B pipeline has **not** been
+anchored against a Goodfire-paper number yet.
 
-**Open threads (tasks #14–#19):** in-the-wild router, group-sparse charts, proper
-isometric-AE, more seeds + bigger manifolds, layer-sensitivity sweep at 8B,
-cross-architecture (Qwen / Mistral).
+**Open threads (tasks #14–#19, plus #20 anchor):** in-the-wild router,
+group-sparse charts, proper isometric-AE, more seeds + bigger manifolds,
+layer-sensitivity sweep at 8B, cross-architecture (Qwen / Mistral), and the
+**anchor**: replicate one Goodfire-paper figure at 8B before re-investing in
+the §9b.3–5 / §9b.7 legs.

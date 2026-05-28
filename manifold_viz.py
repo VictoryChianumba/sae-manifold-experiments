@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from sklearn.decomposition import PCA
 
-from data import load_manifold_data, CACHE_DIR
+from data import load_manifold_data, CACHE_DIR, DEVICE
 
 OUT = CACHE_DIR / "manifold_viz"
 
@@ -133,7 +133,7 @@ def main():
     sae = None
     if a.sae:
         from saes import load_sae
-        sae = load_sae(a.sae, device="cpu",
+        sae = load_sae(a.sae, device=DEVICE,
                        **({"d_in": a.d_in} if a.d_in else {}),
                        **({"k": a.k} if a.k else {}))
     for m in a.manifold:

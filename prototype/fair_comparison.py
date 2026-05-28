@@ -48,7 +48,7 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.neighbors import KNeighborsRegressor
 
-from data import load_manifold_data, CACHE_DIR, D_MODEL
+from data import load_manifold_data, CACHE_DIR, D_MODEL, DEVICE
 from saes import BatchTopKSAE, load_sae, get_decoder
 from factored_sae import FactoredSAE, PRIMARY_LABEL
 
@@ -203,11 +203,13 @@ def train_standard_sae(Xtr_mix, seed, expansion_factor=8, k=32,
     mixture train split, so the standard baseline sees the same data as the
     factored models — isolating architecture from training data."""
     torch.manual_seed(seed); np.random.seed(seed)
-    X = torch.from_numpy(Xtr_mix).float()
+    # Train on GPU when available (DEVICE), then move back to CPU before returning so
+    # downstream encode/decode on numpy-backed CPU tensors keeps working unchanged.
+    X = torch.from_numpy(Xtr_mix).float().to(DEVICE)
     N, d_in = X.shape
     d_sae = d_in * expansion_factor
     data_mean = X.mean(0)
-    sae = BatchTopKSAE(d_in=d_in, d_sae=d_sae, k=k, device="cpu")
+    sae = BatchTopKSAE(d_in=d_in, d_sae=d_sae, k=k, device=DEVICE)
     with torch.no_grad():
         sae.decoder.bias.copy_(data_mean)
         W = sae.decoder.weight
@@ -216,9 +218,9 @@ def train_standard_sae(Xtr_mix, seed, expansion_factor=8, k=32,
     for p in sae.parameters():
         p.requires_grad_(True)
     opt = torch.optim.Adam(sae.parameters(), lr=lr)
-    last_fired = torch.zeros(d_sae)
+    last_fired = torch.zeros(d_sae, device=DEVICE)
     for ep in range(epochs):
-        perm = torch.randperm(N)
+        perm = torch.randperm(N, device=DEVICE)
         for bi in range(0, N, batch_size):
             x = X[perm[bi:bi + batch_size]]
             pre = torch.relu(sae.encoder(x))
@@ -242,6 +244,7 @@ def train_standard_sae(Xtr_mix, seed, expansion_factor=8, k=32,
                 active = (z > 0).any(0)
                 last_fired += 1; last_fired[active] = 0
     sae.eval()
+    sae.cpu()                      # downstream encode/decode runs on CPU tensors
     for p in sae.parameters():
         p.requires_grad = False
     return sae
@@ -254,13 +257,13 @@ def train_factored(Xtr_mix, coord_dim, linear, seed, n_charts=12, epochs=120,
     torch.manual_seed(seed); np.random.seed(seed)
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
-    Xn = torch.from_numpy((Xtr_mix - mean) / std)
+    Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=linear)
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=linear).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
     for ep in range(epochs):
-        perm = torch.randperm(N)
+        perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
             recon, a, _ = model(xb)
@@ -271,6 +274,7 @@ def train_factored(Xtr_mix, coord_dim, linear, seed, n_charts=12, epochs=120,
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
+    model.cpu()                    # downstream factored_eval feeds CPU tensors
     return model, (mean.astype(np.float32), std)
 
 

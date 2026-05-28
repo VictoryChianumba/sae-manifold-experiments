@@ -81,8 +81,11 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, names, coord_dim,
     n_manifolds = len(names)
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
-    Xn = torch.from_numpy((Xtr_mix - mean) / std)
-    mid = torch.from_numpy(mid_mix)
+    # Train on DEVICE (GPU when available), then move model back to CPU before
+    # returning so factored_eval keeps feeding CPU tensors.
+    from data import DEVICE
+    Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
+    mid = torch.from_numpy(mid_mix).to(DEVICE)
     N, d_in = Xn.shape
 
     # Per-point 2-component alignment target + active-component mask:
@@ -103,18 +106,18 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, names, coord_dim,
         elif y[sel].std() > 0:
             target[sel, 0] = (y[sel] - y[sel].mean()) / (y[sel].std() + 1e-6)
             tmask[sel, 0] = True
-    target = torch.from_numpy(target)
-    tmask = torch.from_numpy(tmask)
+    target = torch.from_numpy(target).to(DEVICE)
+    tmask = torch.from_numpy(tmask).to(DEVICE)
 
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False)
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False).to(DEVICE)
     # Per-manifold probe: coord (R^cd) -> R^2; non-cyclic uses only component 0.
-    probe_w = torch.nn.Parameter(torch.zeros(n_manifolds, coord_dim, 2))
-    probe_b = torch.nn.Parameter(torch.zeros(n_manifolds, 2))
+    probe_w = torch.nn.Parameter(torch.zeros(n_manifolds, coord_dim, 2, device=DEVICE))
+    probe_b = torch.nn.Parameter(torch.zeros(n_manifolds, 2, device=DEVICE))
     opt = torch.optim.Adam(list(model.parameters()) + [probe_w, probe_b], lr=lr)
     eps = 1e-9
 
     for ep in range(epochs):
-        perm = torch.randperm(N)
+        perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             idx = perm[i:i + batch]
             xb, mb, tb, mkb = Xn[idx], mid[idx], target[idx], tmask[idx]
@@ -136,6 +139,7 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, names, coord_dim,
 
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
+    model.cpu()
     return model, (mean.astype(np.float32), std)
 
 

@@ -59,16 +59,17 @@ def train_factored_iso_pars(Xtr_mix, coord_dim, lam_iso, lam_pars, seed,
                             iso_target=4.0):
     """Nonlinear factored SAE + label-free isometry + coordinate-parsimony priors."""
     torch.manual_seed(seed); np.random.seed(seed)
+    from data import DEVICE
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
-    Xn = torch.from_numpy((Xtr_mix - mean) / std)
+    Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False)
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
 
     for ep in range(epochs):
-        perm = torch.randperm(N)
+        perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
             recon, a, coords = model(xb)          # coords [B, M, cd], a [B, M]
@@ -83,7 +84,7 @@ def train_factored_iso_pars(Xtr_mix, coord_dim, lam_iso, lam_pars, seed,
 
             if lam_iso > 0:
                 # Isometry: fixed-target directional speed of each chart decoder.
-                u = torch.randn(coord_dim); u = u / (u.norm() + 1e-8)
+                u = torch.randn(coord_dim, device=DEVICE); u = u / (u.norm() + 1e-8)
                 r0 = torch.stack([model.charts[m](coords[:, m])
                                   for m in range(n_charts)], dim=1)
                 rp = torch.stack([model.charts[m](coords[:, m] + fd_eps * u)
@@ -104,6 +105,7 @@ def train_factored_iso_pars(Xtr_mix, coord_dim, lam_iso, lam_pars, seed,
 
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
+    model.cpu()
     return model, (mean.astype(np.float32), std)
 
 

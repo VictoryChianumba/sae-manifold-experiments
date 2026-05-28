@@ -126,19 +126,20 @@ def train_factored_adaptive(Xtr_mix, coord_dim, lam_iso, lam_gate, seed,
                             iso_target=4.0, coord_norm=True):
     """Gated nonlinear factored SAE + label-free isometry + adaptive parsimony."""
     torch.manual_seed(seed); np.random.seed(seed)
+    from data import DEVICE
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
-    Xn = torch.from_numpy((Xtr_mix - mean) / std)
+    Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = GatedFactoredSAE(d_in, n_charts, coord_dim, coord_norm=coord_norm)
+    model = GatedFactoredSAE(d_in, n_charts, coord_dim, coord_norm=coord_norm).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
     # Mild Matryoshka: later dims cost more, so variance packs into dim 0 first.
-    dim_cost = torch.arange(1, coord_dim + 1, dtype=torch.float32)
+    dim_cost = torch.arange(1, coord_dim + 1, dtype=torch.float32, device=DEVICE)
 
     model.train()
     for ep in range(epochs):
-        perm = torch.randperm(N)
+        perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
             recon, a, gcoords = model(xb)         # gcoords [B,M,cd], a [B,M]
@@ -154,7 +155,7 @@ def train_factored_adaptive(Xtr_mix, coord_dim, lam_iso, lam_gate, seed,
             if lam_iso > 0:
                 # Isometry: fixed-target directional speed of each chart decoder,
                 # measured in the *gated* coordinate it actually uses.
-                u = torch.randn(coord_dim); u = u / (u.norm() + 1e-8)
+                u = torch.randn(coord_dim, device=DEVICE); u = u / (u.norm() + 1e-8)
                 g = model.gates() * u / model.coord_std.clamp_min(1e-6)  # [M,cd]
                 r0 = torch.stack([model.charts[m](gcoords[:, m])
                                   for m in range(n_charts)], dim=1)
@@ -173,6 +174,7 @@ def train_factored_adaptive(Xtr_mix, coord_dim, lam_iso, lam_gate, seed,
 
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
+    model.cpu()
     return model, (mean.astype(np.float32), std)
 
 

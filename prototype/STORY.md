@@ -125,25 +125,51 @@ monotonically through the cold→hot crossover (slope +0.231/α), while an equal
 **random control** is flat (slope +0.018, ~13× weaker). The legible coordinate isn't
 just decodable — pushing on it *steers the model*. "Representation" → "control."
 
+## Part VIII — Real model (Llama-3.1-8B)
+
+The acid test for which of the small-model findings were real and which were
+artefacts. Run via `run_all.py` on RunPod A100, layer 16, 3 seeds. Most held;
+two reframed; one strengthened the central claim.
+
+**Strengthened.** Curvature-beats-flat is now bulletproof — `factored-LIN`
+collapses to −0.02 mean VE@3 at 8B (vs +0.15 at 135M), so the factored-NL win
+is curvature, not parameter slack. Shattering ratio over PCA jumps ~9× → ~14×.
+
+**Reframed.** (1) Part V was sold as "PCA can't read concepts so we need labels."
+At 8B, PCA's label R² is **0.86–0.99 across all five concepts** — supervision is
+now a *refinement* of an already-readable baseline, not a rescue. Mechanism
+unchanged; gap to close is smaller. (2) Adaptive parsimony's "scale fixes it"
+hedge is dead — gates close uniformly at 8B too, so it's a cost-shape limit, not
+a small-model artefact.
+
+**Steering re-runs at 8B (§9b.7).** Same recipe on Llama-3.1-8B layer 16, one
+seed, one manifold (temperature). Slope +0.090/α — **strictly monotone**, ~6× a
+flat random control. Mechanism survives; magnitude drops ~2.5× (from +0.231 at
+135M). Most-supported reading mirrors the legibility reframing: temperature is
+already nearly linearly readable at 8B (PCA R² 0.99), so the curved axis IS
+causal but not exceptionally so over random directions. Honest dilution of the
+"13×" framing.
+
 ---
 
 ## Where the through-line stands
 
 | Question | Answer | Strength |
 |---|---|---|
-| Curved SAE → better fidelity? | **Yes**, beats the PCA linear ceiling on curved manifolds | Strong (3 seeds, held-out, matched dim) |
-| …interpretable coordinate? | **Yes with weak supervision** (incl. cyclic); ◐ label-free only on low-D | Strong supervised / partial unsupervised |
-| …causally a control handle? | **Yes**, ~13× a random control | Proof-of-concept (1 manifold/seed) |
+| Curved SAE → better fidelity? | **Yes**, beats the PCA linear ceiling on curved manifolds; **cleaner at 8B** (factored-LIN collapses) | Strong (3 seeds, held-out, matched dim, two scales) |
+| …interpretable coordinate? | **Yes with weak supervision** (incl. cyclic); ◐ label-free only on low-D; at 8B the gap PCA leaves is smaller | Strong supervised / partial unsupervised |
+| …causally a control handle? | **Yes at two scales**, ~13× rand. control at 135M, ~6× at 8B (monotone both times) | Proof-of-concept, two scales × 1 manifold/seed |
 
 **One-line story:** *a curved, factored SAE captures concept manifolds that a standard
-SAE shatters, and — once you orient its coordinate — that coordinate is both a legible
-readout and a causal control, on a small model.*
+SAE shatters, and — once you orient its coordinate — that coordinate is both a
+legible readout and a causal control, on a small model **and** on Llama-3.1-8B (with
+caveats noted in Part VIII).*
 
-**Standing limitations:** toy scale (135M, ~5k points, age/days too small); we changed
-the lens not the model except in Part VII; "matched dimensionality" isn't fully
-"matched capacity"; the legibility wins lean on weak supervision.
+**Standing limitations:** still toy by some axes — `age`/`days` too small, 3 seeds at
+8B, one layer, one contrast pair / one manifold for steering at each scale;
+"matched dimensionality" isn't fully "matched capacity"; the legibility wins lean
+on weak supervision.
 
-**Open threads (tasks #13–#17):** ~~adaptive parsimony~~ (◐/❌ attempted — cures
-over-collapse but no differential dim allocation; unsupervised frontier stays open),
-real-model validation (#13, now also the natural retest for adaptive parsimony),
-in-the-wild router, group-sparse charts, proper isometric-AE, more seeds.
+**Open threads (tasks #14–#19):** in-the-wild router, group-sparse charts, proper
+isometric-AE, more seeds + bigger manifolds, layer-sensitivity sweep at 8B,
+cross-architecture (Qwen / Mistral).

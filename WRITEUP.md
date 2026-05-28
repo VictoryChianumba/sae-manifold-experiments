@@ -37,7 +37,9 @@ The short version:
   ones. Qualified positive; adaptivity is the open frontier.
 - **The legible coordinate is causal, not just decodable.** Steering along it moves the
   model's behaviour monotonically in the concept direction (hot/cold for temperature),
-  ~13× an equal-norm random control — "representation" upgraded to "control."
+  ~13× an equal-norm random control at 135M and ~6× at 8B (§9b.7) — qualitatively
+  reproducible at scale, with attenuated magnitude. "Representation" upgraded to
+  "control."
 
 Throughout, the honest caveat: this is a **toy** (135M model, ~5k points, a research
 SAE, not a scalable one), and we changed the **lens (the SAE), not the model**.
@@ -426,6 +428,13 @@ bonus the project set itself — is whether it is *causal*: if we move along it,
 **model's behaviour** follow? This is also the first experiment that touches the model,
 not just the lens.
 
+**A scale note (added after §9b.7):** the numbers below are 135M-specific. §9b.7
+re-runs the same recipe on Llama-3.1-8B layer 16: the legible-axis curve stays
+strictly monotone and ~6× the random control's slope, but the slope itself drops
+from +0.231 to +0.090 (and the random-control ratio from ~13× to ~6×). Mechanism
+survives; magnitude attenuates — consistent with §9b.6's "PCA already reads it at
+scale" pattern (temperature's 8B PCA R² is 0.99).
+
 **Method (activation steering, but the direction comes from our legible coordinate):**
 take the aligned (λ=1) factored SAE, find temperature's dominant chart and its
 **legible axis** ŵ (the unit coordinate direction the held-out label probe maps to the
@@ -623,14 +632,76 @@ the "scale fixes it" hypothesis.
   Same shape at 8B as 135M: gates close uniformly, no per-manifold dim differentiation.
   A proper intrinsic-dim mechanism needs a different cost (group sparsity over dims,
   or per-manifold dim-budget) — see §12.
+- **Causal steering replicates qualitatively but attenuates quantitatively.**
+  §9b.7 below: legible-axis slope drops 0.231→0.090 and the ratio over random
+  control drops ~13×→~6×, while the curve stays strictly monotone and the random
+  control stays flat. The most parsimonious reading mirrors the legibility one:
+  at 8B, temperature is already nearly linearly readable (PCA R² 0.99), so the
+  curved axis isn't getting much *extra* lift over a random direction. The
+  qualitative claim ("the legible coordinate is causal") survives; the
+  quantitative size of the effect doesn't.
+
+### 9b.7 Steering replicates at 8B — qualitatively, with attenuation (`steer.py`)
+
+Same recipe as Part VII (`steer.py`, aligned λ=1 legible temperature axis, α∈[−3,+3]
+patched into layer-16 last-token activation, ` hot`−` cold` logit contrast averaged
+over the same three readout prompts, equal-norm random direction as control). One
+seed, run on `NousResearch/Meta-Llama-3.1-8B` with `SAE_CACHE_TAG=meta-llama-3.1-8b_L16`
+on the existing pod; ‖v‖ = 0.88 in raw activation units, dominant chart = 0,
+contrast tokens single-token (` hot`=4106, ` cold`=9439).
+
+| α (steering strength) | −3 | −2 | −1 | 0 | +1 | +2 | +3 | slope/α |
+|---|---|---|---|---|---|---|---|---|
+| **legible axis**, logit(hot−cold) | −1.31 | −1.27 | −1.15 | −1.04 | −0.98 | −0.88 | −0.79 | **+0.090** |
+| random control (equal norm) | −1.08 | −1.08 | −1.08 | −1.04 | −0.98 | −1.02 | −1.02 | +0.015 |
+
+**Headline:** the legible-axis curve is **strictly monotone** across all seven α and
+positive-sloped; the random-control curve is flat to within ±0.06 with no monotone
+trend. The legible axis's slope is **~6× the random control's** — the causal claim
+*replicates qualitatively* on the paper's model. `cache/meta-llama-3.1-8b_L16/steer/steering.png`.
+
+**The honest part — the effect is materially weaker than at 135M.** Slope per
+unit α drops 0.231 → 0.090 (~2.5× smaller), and the ratio over random control
+drops ~13× → ~6×. Three non-exclusive readings, ordered most → least supported:
+
+1. **The "PCA already reads it" effect from §9b.2 has a causal echo.** At 8B,
+   temperature's PCA label R² is 0.99 — the concept is largely linearly readable
+   from the activation itself. When the concept direction is already a near-flat
+   direction in the activation space, the curved chart still picks a *valid*
+   causal direction but so do many other directions, so the ratio over an equal-norm
+   *random* direction shrinks. Mirror-image of the §9b.6 finding for legibility:
+   the mechanism still works, but the gap it has to close at scale is smaller.
+2. **More downstream depth between patch and readout.** 32 layers at 8B vs 30 at
+   135M, but layers 16 → 32 = 16 downstream layers at 8B vs layers 19 → 30 = 11 at
+   135M (the layer index isn't comparable across models; we picked mid-layer in
+   both). More downstream non-linearity may absorb a fixed-magnitude perturbation.
+3. **bf16 at the patch site.** ‖v‖ = 0.88 is large relative to bf16's quantum at
+   that activation magnitude, so this is unlikely to dominate, but it can't be
+   *excluded* without a fp32 control we didn't run.
+
+What this does NOT mean: it does *not* mean the curved chart is uncausal at 8B,
+and it does *not* mean the legible coordinate is "just a decoder." A random
+direction of the same norm is essentially flat; the picked axis isn't. The claim
+that **the legible coordinate has a real causal handle on the concept** survives;
+the claim that the handle is *exceptionally* tight (the original 13× framing)
+softens to "clearly above random, modestly above the floor a linear axis already
+provides at this scale."
+
+**Caveats inherited from Part VII** (still applicable): one manifold (temperature),
+one seed, hand-picked contrast pair, mean linear direction (not the full chart
+map). A stronger version sweeps multiple manifolds (years' richer curvature would
+be the natural next; pick a contrast like `' twenty'` vs `' nineteen'` to dodge
+multi-token year strings), compares to the unaligned coordinate's axis (not only
+a random control), and pairs each α with a fp32 control to triangulate reading 3.
 
 **Limitations of this run.** Single layer (16), one 8B model, 3 seeds. Steering
-(Part VII) was not re-run at 8B — the causal claim still rests on the 135M
-proof-of-concept. We used `NousResearch/Meta-Llama-3.1-8B` (ungated mirror of the
-official weights) rather than the gated `meta-llama/Llama-3.1-8B`; the weights are
-the same architecture and were verified by hash on prior published reports, but the
-provenance is one step indirect. Layer 16 was picked as a default mid-layer; the
-layer-sensitivity sweep (#13 follow-on) is the natural next test.
+(Part VII) re-ran at 8B for one seed/manifold — see §9b.7 — with a qualitatively
+matching but quantitatively attenuated result; the 135M slope/ratio is the upper
+end of what to expect, not a universal constant. We used `NousResearch/Meta-Llama-3.1-8B`
+(ungated mirror of the official weights) rather than the gated `meta-llama/Llama-3.1-8B`;
+the weights are the same architecture and were verified by hash on prior published
+reports, but the provenance is one step indirect. Layer 16 was picked as a default
+mid-layer; the layer-sensitivity sweep (#13 follow-on) is the natural next test.
 
 ---
 
@@ -648,8 +719,9 @@ layer-sensitivity sweep (#13 follow-on) is the natural next test.
 | Unsupervised isometry alone | ❌ Negative; arc-length ≠ linear-in-coordinate |
 | Isometry + parsimony (global) | ◐ Qualified positive: works on low-D, over-collapses multi-D |
 | Adaptive parsimony (learned per-dim gates) | ◐/❌ Qualified negative: cures over-collapse but gates close uniformly (no intrinsic-dim differentiation); incidental finding = coordinate normalization trades VE for years legibility |
-| Steering along the legible axis | ✅ Causal: monotone hot/cold shift, ~13× a random control |
+| Steering along the legible axis (135M) | ✅ Causal: monotone hot/cold shift, ~13× a random control |
 | **Real-model validation (Llama-3.1-8B, layer 16)** | ✅ Shattering reproduces (14×); factored-NL still beats PCA on average (+0.10 mean VE); **+0.42 VE on geography**, **+0.09 on years**; factored-LIN collapses (geometry, not parameter slack); adaptive-parsimony qualified negative reproduces (method limit, not scale) |
+| Steering at 8B (§9b.7) | ◐ Replicates qualitatively (monotone, ~6× random) but attenuates (slope +0.231→+0.090) — consistent with §9b.6's "PCA already reads it at scale" |
 
 ---
 
@@ -658,13 +730,15 @@ layer-sensitivity sweep (#13 follow-on) is the natural next test.
 - **Toy scale (Parts I–VII).** SmolLM2-135M (not Llama-3.1-8B), ~5k points total,
   manifolds as small as 56–199 points. `age` (69 train points) is consistently
   unreliable; `days` was dropped entirely. Three seeds is few; the steering result is
-  a single seed/manifold. **Part VIII** lifts the suite to Llama-3.1-8B layer 16 —
-  one layer, one 8B model, 3 seeds, no steering replication — so a real-model
-  toehold, not a sensitivity sweep.
+  a single seed/manifold at each scale. **Part VIII** lifts the suite to Llama-3.1-8B
+  layer 16 — one layer, one 8B model, 3 seeds, **and one seed/manifold for steering
+  (§9b.7)** — so a real-model toehold on every leg of the claim, not a sensitivity
+  sweep.
 - **Mostly we changed the lens, not the model.** Parts I–VI re-represent fixed
   activations with different SAEs/decoders. Part VII (steering) is the one exception
-  that intervenes on the model — but on one manifold, one contrast pair, one small
-  model, so treat it as a proof-of-concept causal signal, not a general claim.
+  that intervenes on the model — but on one manifold, one contrast pair, two scales
+  (135M + 8B, §9b.7), so treat it as a two-point causal signal whose *magnitude*
+  varies with scale, not a general claim.
 - **The factored model is not a scalable SAE.** It has no SAE-style sparsity, trains on
   a tiny curated mixture, and its "router discovers manifolds" property was only
   checked loosely (purity), not rigorously held-out in the fair comparison.
@@ -699,21 +773,28 @@ interpretability/parsimony* at matched sparsity & capacity, held-out, ideally on
 real model, **bonus:** a causal/steering leg) is now **largely met**:
 
 - Geometry fidelity ✅; interpretability ✅ *with* weak supervision, ◐ unsupervised.
-- **Bonus causal/steering leg ✅** — the legible axis causally steers the model
-  (Part VII), ~13× a random control. The remaining gap is breadth (one manifold/seed).
+- **Bonus causal/steering leg ✅ at two scales** — the legible axis causally
+  steers the model at 135M (~13× a random control, Part VII) and at 8B (~6×, §9b.7).
+  The mechanism survives the scale jump; the magnitude attenuates (consistent with
+  PCA reading the same axis at 8B per §9b.2). The remaining gap is breadth (one
+  manifold per scale, one contrast pair, one seed).
 - **"Ideally on a real model" ✅** — Part VIII validates the suite on Llama-3.1-8B
   layer 16. Shattering reproduces, factored-NL still beats PCA in mean VE@3 (and on
   the curved manifolds specifically: years +0.09, geography +0.42), factored-LIN
-  collapses at 8B (confirming the win is curvature, not parameter slack), and the
-  adaptive-parsimony qualified negative reproduces (so it's a method limit, not a
-  scale artefact). The remaining real-model gap is *breadth*: a layer sweep, more
-  seeds, and an 8B re-run of steering (Part VII).
+  collapses at 8B (confirming the win is curvature, not parameter slack), the
+  adaptive-parsimony qualified negative reproduces (method limit, not scale
+  artefact), and §9b.7 closes the steering orphan from the prior version of
+  this section. The remaining real-model gap is *breadth*: a layer sweep, more
+  seeds, and the multi-manifold/contrast version of steering.
 
 **Explicitly still on the list / things we have not yet done:**
 
-1. ~~**Causal / steering leg**~~ ✅ **Done** (Part VII / `steer.py`) — proof-of-concept
-   on temperature; the breadth version (multiple manifolds/contrasts, and comparing
-   against the *unaligned* axis, not only a random control) is the natural follow-up.
+1. ~~**Causal / steering leg**~~ ✅ **Done at two scales** (Part VII at 135M /
+   §9b.7 at 8B, `steer.py`) — proof-of-concept on temperature, replicates
+   qualitatively at 8B with attenuated magnitude (see §9b.7). The breadth version
+   (multiple manifolds/contrasts, comparing against the *unaligned* axis not only
+   a random control, and a fp32 vs bf16 control to pin reading 3 in §9b.7) is the
+   natural follow-up.
 2. ~~**Coordinate-vs-label visualization.**~~ ✅ **Done** (`viz_coord.py`):
    `cache/viz/coord_vs_label.png` (predicted-vs-true label, unsupervised vs aligned)
    and `cache/viz/colors_circle.png` (the partial hue loop). The diagonal-tightening

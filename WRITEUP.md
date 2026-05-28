@@ -443,6 +443,182 @@ axis, not only a random control.
 
 ---
 
+## 9b. Part VIII — Real-model validation: Llama-3.1-8B (`run_all.py` on RunPod)
+
+Up to this point everything was SmolLM2-135M — toy scale, deliberately. The biggest
+open question was whether the geometric headline (curved charts beat both PCA and
+standard SAEs on curved manifolds; legibility supervision orients them at near-zero
+VE cost) survived a *real* model. So we lifted the same end-to-end suite onto
+**Llama-3.1-8B layer 16** (d=4096, paper's model family, ungated mirror
+`NousResearch/Meta-Llama-3.1-8B`), 3 seeds, 200k background C4 tokens for the standard-SAE
+baseline (expansion ×8 → 32,768 features, k=32), on a rented A100.
+
+`prototype/run_all.py` runs the full pipeline unattended — `extract → background → sae
+→ fair → legible → iso → adaptive` — into a per-`(model, layer)` cache namespace
+(`cache/meta-llama-3.1-8b_L16/`); `RUNPOD.md` is the runbook (transfer, `pip install`
+not `uv sync` on a CUDA pod, gating workaround, exposed-TCP rsync). Crash recovery is
+free because every stage is idempotent on its output path. The novel-GPU work (`legible
+→ iso → adaptive`) finished in **94 minutes** on the A100 (16 + 25 + 53 min); `fair`
+was already cached from an earlier session.
+
+### 9b.1 Fair comparison @ N=3 — held-out VE, mean ± std over 3 seeds (the headline)
+
+|                | model | years          | age            | temperature    | colors         | geography       | mean |
+|---             |---    |---             |---             |---             |---             |---              |--- |
+| **PCA**        | 135M  | 0.39 ± 0.02    | 0.79 ± 0.02    | 0.79 ± 0.02    | 0.74 ± 0.00    | 0.52 ± 0.00     | 0.65 |
+| **PCA**        | 8B    | 0.22 ± 0.01    | 0.67 ± 0.02    | 0.88 ± 0.01    | 0.74 ± 0.00    | 0.19 ± 0.00     | 0.54 |
+| **SAE-geo (C4)**   | 135M  | 0.09 | 0.06 | 0.09 | 0.09 | 0.04 | **0.07** |
+| **SAE-geo (C4)**   | 8B    | 0.06 | 0.04 | 0.05 | 0.03 | 0.03 | **0.04** |
+| **SAE-geo (mix)**  | 135M  | 0.10 | 0.27 | 0.50 | 0.53 | 0.20 | 0.32 |
+| **SAE-geo (mix)**  | 8B    | 0.10 | 0.23 | 0.27 | 0.37 | 0.07 | 0.21 |
+| **factored-lin** | 135M  | 0.09 | −0.07 | 0.05 | 0.57 | 0.12 | 0.15 |
+| **factored-lin** | 8B    | −0.01 | −0.01 | −0.06 | −0.02 | 0.02 | **−0.02** |
+| **factored-nl**  | 135M  | **0.84** | 0.29 | 0.68 | 0.80 | 0.76 | **0.68** |
+| **factored-nl**  | 8B    | 0.31 | 0.65 | **0.88** | **0.78** | **0.61** | **0.64** |
+
+Three things to read off this table:
+
+1. **Standard-SAE shattering reproduces — louder.** The C4-trained SAE is at 0.04 mean
+   VE@3 vs PCA's 0.54 — a ~14× collapse, slightly worse than the 9× at 135M. The same
+   "low subspace capture for the things we'd want to read off it" story holds, on the
+   model family the paper actually used.
+2. **Factored-NL still wins on average and crushes PCA on the curved manifolds.**
+   At 8B, factored-NL beats PCA by **+0.09 on years** and **+0.42 on geography** —
+   the two manifolds where the geometry is most overtly curved (text-relative number
+   ordering for years; a 2-D map-like layout for geography). On temperature and colors
+   they're tied at PCA's ceiling. On `age` (69 train points, our worst-data manifold)
+   PCA edges it. **Mean over the 5 manifolds: 0.64 vs 0.54 PCA**, against 0.68 vs 0.65
+   at 135M. Curvature still pays off, and the prize is bigger where curvature is most
+   visible.
+3. **Factored-LIN collapses at 8B.** Mean VE drops from +0.15 to **−0.02**: a linear
+   chart of the same dimensionality as the nonlinear chart can no longer match even
+   PCA. The nonlinear chart isn't winning by burning parameters — its linear twin is
+   identically parameterised in coord_dim and strictly worse than PCA. The win is in
+   the curvature itself.
+
+### 9b.2 Label R² @ N=3 (held-out, kNN; cyclic-aware on colors)
+
+|                | model | years | age   | temperature | colors | geography |
+|---             |---    |---    |---    |---          |---     |---        |
+| **PCA**         | 135M | 0.77 | 0.93 | 0.97 | 0.38 | 0.67 |
+| **PCA**         | 8B   | **0.98** | 0.97 | 0.99 | 0.98 | 0.86 |
+| **SAE-geo (C4)** | 135M | 0.20 | 0.86 | 0.71 | 0.28 | 0.63 |
+| **SAE-geo (C4)** | 8B   | 0.02 | 0.79 | 0.99 | 0.92 | 0.44 |
+| **factored-NL**  | 135M | 0.29 | 0.76 | 0.94 | 0.27 | 0.58 |
+| **factored-NL**  | 8B   | **0.99** | 0.94 | 0.99 | 0.73 | 0.95 |
+
+**Surprise (and an honest correction):** at 8B, **PCA's label R² is already nearly
+saturated everywhere** (0.86–0.99) — including colors, where at 135M it had been our
+hardest case (0.38). Llama-3.1-8B's layer-16 representations are clean enough that a
+3-D linear projection is, by itself, *legible* under cyclic-aware scoring. That moves
+the goalposts: the unsupervised legibility story we leaned on for the toy model
+("PCA doesn't read off label" / "factored coordinate is harder to decode raw") is
+*not* the 8B story. The factored-NL coordinate is also high-R² there (mean across the
+five 0.92 vs PCA's 0.96), but it doesn't get to win on PCA being unreadable, because
+PCA *is* readable here.
+
+The geography line is the cleanest demonstration of why factored still matters:
+factored-NL hits **VE 0.61, label R² 0.95** at coord_dim=3, while PCA only manages
+**VE 0.19, label R² 0.86** in the same 3 dims. Same dimensionality, more than triple
+the variance explained, and the labels still read off the coordinate. PCA's "legible
+ceiling" at 8B is real but it sits at a much lower VE than the curved chart.
+
+### 9b.3 Legibility supervision (`legible_coord`) at 8B
+
+Same λ-sweep as Part V (`lam ∈ {0, 0.3, 1, 3, 10}`). Mean VE@3 stays flat at **0.64–0.66**
+across λ — alignment is essentially free in fidelity, just like at 135M. Label R²:
+
+| λ      | non-cyclic mean (lin R²) | colors kNN R² (cyclic) |
+|---     |---                       |---                     |
+| 0      | 0.81                     | 0.73                   |
+| 0.3    | 0.81                     | 0.84                   |
+| 1      | 0.84                     | 0.75                   |
+| 3      | 0.84                     | 0.91                   |
+| 10     | 0.88                     | **0.93**               |
+
+Colours go from 0.73 → 0.93 across the sweep at a flat VE — the same pattern as the
+135M run, and on the manifold that was hardest there. So *weak label alignment as a
+post-hoc orientation step* reproduces at 8B scale. We don't claim more than that —
+PCA is already very legible at 8B, so the gap legibility supervision closes is much
+smaller than at 135M.
+
+### 9b.4 Unsupervised isometry + parsimony (`iso_parsimony`) at 8B
+
+| iso | par | mean VE@3 | non-cyclic lin R² | colors kNN R² |
+|---  |---  |---        |---                |---            |
+| 0   | 0   | 0.64      | 0.81              | 0.73          |
+| 0   | 2   | 0.65      | 0.80              | **0.97**      |
+| 0   | 8   | 0.61      | 0.86              | 0.77          |
+| 1   | 0   | 0.64      | 0.80              | 0.85          |
+| 1   | 2   | 0.64      | 0.79              | 0.83          |
+| 1   | 8   | 0.64      | 0.84              | 0.77          |
+
+The same "qualified positive" shape from the 135M run: at iso=0, par=2 the colors
+loop tightens dramatically (knn R² → 0.97) at near-flat VE — the chart finds the hue
+circle when gently pushed to spend fewer dims, without an isometry term doing
+anything. Strong parsimony (par=8) starts to bleed VE on `age` (0.57). The win is
+real and small; the over-collapse failure mode at large par is the same one we saw
+at 135M.
+
+### 9b.5 Adaptive parsimony (`adaptive_parsimony`) at 8B — same qualified negative
+
+Per-chart per-dim learned gates with the Matryoshka (1,2,3) dim-cost prior:
+
+```
+Held-out VE@3 (mean over 3 seeds, coord_dim=3):
+  iso  gate   years    age   temperat   colors   geography   mean*
+    0     0    0.22    0.68      0.83     0.57     0.59       0.58
+    0     8    0.27    0.68      0.77     0.54     0.62       0.58
+    1     0    0.23    0.68      0.83     0.54     0.61       0.58
+    1     8    0.22    0.69      0.82     0.53     0.59       0.57
+                                                              (mean* excludes cyclic)
+Active coord dims (Σ gates of dominant chart, lower = fewer):
+    0     0   2.67    2.66    2.65    2.65    2.69
+    0     8   2.40    2.31    2.34    1.88    2.12
+    1     8   2.49    2.48    2.47    2.34    2.25
+```
+
+The 135M conclusion reproduces verbatim at 8B: pushing `lam_gate` from 0 → 8 closes
+gates roughly uniformly across manifolds (years 2.67 → 2.40, geography 2.69 → 2.12),
+mean VE moves a single percentage point, and crucially the gates **do not** open up
+the high-intrinsic-dim manifolds (geography, colors) while closing the 1-D ones —
+the differential allocation we wanted never appears. This is **not a small-model
+artefact**; it's a method limitation: a fixed per-dim cost with a softmax-routed
+mixture can't express "this manifold deserves three dims, this one deserves one"
+unless something in the loss makes opening the third dim *expensive enough only on
+the 1-D manifolds*, which the L1 + Matryoshka cost doesn't. Useful to know — it kills
+the "scale fixes it" hypothesis.
+
+### 9b.6 What 8B taught us that 135M couldn't
+
+- **The factored advantage is geometry, not parameter slack.** The linear-chart
+  twin collapses at 8B (mean VE −0.02). At 135M `factored-lin` retained a small
+  positive margin (mean +0.15) that could plausibly be read as "you gave it more
+  parameters than PCA." At 8B that reading dies cleanly: same parameters, same
+  routing, same coord_dim, and the linear version loses to PCA.
+- **PCA is dramatically more legible at 8B.** Llama-3.1-8B's mid-layer activations
+  concentrate cleanly enough that a 3-D linear projection alone hits 0.86–0.99 label
+  R² across all five concepts. The 135M "PCA can't read colors" story doesn't
+  generalise.
+- **Curvature pays off where curvature is visible.** The biggest 8B factored-NL VE
+  wins over PCA — years +0.09 and geography +0.42 — are on the two manifolds whose
+  geometry is most overtly nonlinear. On effectively-linear `temperature` and
+  `colors`, they tie at PCA's ceiling.
+- **The adaptive-parsimony qualified negative is a method limit, not a scale one.**
+  Same shape at 8B as 135M: gates close uniformly, no per-manifold dim differentiation.
+  A proper intrinsic-dim mechanism needs a different cost (group sparsity over dims,
+  or per-manifold dim-budget) — see §12.
+
+**Limitations of this run.** Single layer (16), one 8B model, 3 seeds. Steering
+(Part VII) was not re-run at 8B — the causal claim still rests on the 135M
+proof-of-concept. We used `NousResearch/Meta-Llama-3.1-8B` (ungated mirror of the
+official weights) rather than the gated `meta-llama/Llama-3.1-8B`; the weights are
+the same architecture and were verified by hash on prior published reports, but the
+provenance is one step indirect. Layer 16 was picked as a default mid-layer; the
+layer-sensitivity sweep (#13 follow-on) is the natural next test.
+
+---
+
 ## 10. What worked, what didn't (at a glance)
 
 | Step | Outcome |
@@ -458,14 +634,18 @@ axis, not only a random control.
 | Isometry + parsimony (global) | ◐ Qualified positive: works on low-D, over-collapses multi-D |
 | Adaptive parsimony (learned per-dim gates) | ◐/❌ Qualified negative: cures over-collapse but gates close uniformly (no intrinsic-dim differentiation); incidental finding = coordinate normalization trades VE for years legibility |
 | Steering along the legible axis | ✅ Causal: monotone hot/cold shift, ~13× a random control |
+| **Real-model validation (Llama-3.1-8B, layer 16)** | ✅ Shattering reproduces (14×); factored-NL still beats PCA on average (+0.10 mean VE); **+0.42 VE on geography**, **+0.09 on years**; factored-LIN collapses (geometry, not parameter slack); adaptive-parsimony qualified negative reproduces (method limit, not scale) |
 
 ---
 
 ## 11. Limitations (read this before believing anything)
 
-- **Toy scale.** SmolLM2-135M (not Llama-3.1-8B), ~5k points total, manifolds as small
-  as 56–199 points. `age` (69 train points) is consistently unreliable; `days` was
-  dropped entirely. Three seeds is few; the steering result is a single seed/manifold.
+- **Toy scale (Parts I–VII).** SmolLM2-135M (not Llama-3.1-8B), ~5k points total,
+  manifolds as small as 56–199 points. `age` (69 train points) is consistently
+  unreliable; `days` was dropped entirely. Three seeds is few; the steering result is
+  a single seed/manifold. **Part VIII** lifts the suite to Llama-3.1-8B layer 16 —
+  one layer, one 8B model, 3 seeds, no steering replication — so a real-model
+  toehold, not a sensitivity sweep.
 - **Mostly we changed the lens, not the model.** Parts I–VI re-represent fixed
   activations with different SAEs/decoders. Part VII (steering) is the one exception
   that intervenes on the model — but on one manifold, one contrast pair, one small
@@ -506,7 +686,13 @@ real model, **bonus:** a causal/steering leg) is now **largely met**:
 - Geometry fidelity ✅; interpretability ✅ *with* weak supervision, ◐ unsupervised.
 - **Bonus causal/steering leg ✅** — the legible axis causally steers the model
   (Part VII), ~13× a random control. The remaining gap is breadth (one manifold/seed).
-- "Ideally on a real model" ❌ — still SmolLM2-135M.
+- **"Ideally on a real model" ✅** — Part VIII validates the suite on Llama-3.1-8B
+  layer 16. Shattering reproduces, factored-NL still beats PCA in mean VE@3 (and on
+  the curved manifolds specifically: years +0.09, geography +0.42), factored-LIN
+  collapses at 8B (confirming the win is curvature, not parameter slack), and the
+  adaptive-parsimony qualified negative reproduces (so it's a method limit, not a
+  scale artefact). The remaining real-model gap is *breadth*: a layer sweep, more
+  seeds, and an 8B re-run of steering (Part VII).
 
 **Explicitly still on the list / things we have not yet done:**
 
@@ -529,8 +715,12 @@ real model, **bonus:** a causal/steering leg) is now **largely met**:
    next test.
 4. **A proper isometric-AE** (exact Jacobian + encoder pseudo-inverse term) instead of
    the finite-difference surrogate, to give isometry its fairest shot.
-5. **Validate on a real model** — at least one larger model / more layers, to show the
-   135M result isn't an artifact of weak small-model geometry.
+5. ~~**Validate on a real model**~~ ✅ **Done** (Part VIII / `run_all.py` on RunPod):
+   Llama-3.1-8B layer 16, 3 seeds. The 135M result is **not** a small-model artefact —
+   shattering and the curved-chart advantage both reproduce, the latter more strongly
+   on overtly-curved manifolds (geography +0.42 mean VE over PCA at coord_dim=3).
+   What's left: layer-sensitivity sweep, an 8B Llama re-run of steering, and a second
+   model family (e.g. Qwen or Mistral) for cross-architecture evidence.
 6. **In-the-wild router.** Train the factored model on *background* activations (not the
    curated mixture) and test whether charts discover manifolds unsupervised — the claim
    "the router is the learned analogue of feature clustering" is currently only shown on
@@ -580,5 +770,5 @@ in `REPRODUCTION.md`; prototype notes in `prototype/README.md`.
 
 ---
 
-*Last updated: 2026-05-27 (added §8.3 adaptive parsimony — qualified negative).
+*Last updated: 2026-05-28 (added Part VIII — Llama-3.1-8B real-model validation).
 Open threads tracked in §11/§12.*

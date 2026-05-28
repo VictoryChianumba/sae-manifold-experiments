@@ -22,7 +22,14 @@ coordinate):
 Run (CPU, from repo root; loads SmolLM2-135M):
   SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19 \
   SAE_DEVICE=cpu SAE_D_MODEL=576 uv run python prototype/steer.py
+
+Run (CUDA pod, Llama-3.1-8B layer 16 — task #13a):
+  SAE_MODEL_NAME=NousResearch/Meta-Llama-3.1-8B SAE_LAYER=16 \
+  SAE_D_MODEL=4096 SAE_CACHE_TAG=meta-llama-3.1-8b_L16 \
+  python prototype/steer.py
+  (SAE_DEVICE auto-selects cuda; cache lands in cache/<tag>/steer/.)
 """
+import json
 import sys
 from pathlib import Path
 
@@ -32,7 +39,7 @@ import numpy as np
 import torch
 from sklearn.linear_model import LinearRegression
 
-from data import CACHE_DIR, LAYER, load_llm
+from data import CACHE_DIR, DEVICE, LAYER, load_llm
 from fair_comparison import load_split, factored_eval
 from legible_coord import train_factored_legible, _mixture_arrays
 
@@ -82,7 +89,11 @@ def legible_steering_vector(coord_dim=3, seed=0):
 @torch.no_grad()
 def readout_logit_contrast(model, tok, prompt, v_alpha, pos_id, neg_id):
     """Patch layer-L last-token activation by v_alpha, return logit(pos) - logit(neg)."""
-    vt = torch.tensor(v_alpha, dtype=torch.float32)
+    # vt must match the model's device + dtype: at 135M (CPU/fp32) this is a no-op,
+    # at 8B on CUDA the model is typically bf16 and a default-fp32-CPU vt would die
+    # with a device-or-dtype mismatch inside the trace.
+    mdtype = next(model.model.parameters()).dtype
+    vt = torch.tensor(v_alpha, dtype=mdtype, device=DEVICE)
     with model.trace(prompt):
         model.model.layers[LAYER].output[0][..., -1, :] += vt
         logits = model.output.logits[..., -1, :].save()
@@ -145,9 +156,22 @@ def main():
 
     # Headline numbers: slope of the legible curve and the control, by least squares.
     A = np.array(ALPHAS, float)
+    slopes = {}
     for label, c in curves.items():
-        slope = np.polyfit(A, c, 1)[0]
+        slope = float(np.polyfit(A, c, 1)[0])
+        slopes[label] = slope
         print(f"  {label}: logit-contrast slope per unit α = {slope:+.3f}")
+
+    # Persist the numbers so the writeup can cite them without re-running.
+    results = {
+        "target": TARGET, "pos_word": POS_WORD, "neg_word": NEG_WORD,
+        "alphas": ALPHAS, "curves": curves, "slopes": slopes,
+        "v_norm": v_norm, "dom_chart": dom,
+        "readout_prompts": READOUT_PROMPTS,
+    }
+    rp = RESULTS_DIR / "results.json"
+    rp.write_text(json.dumps(results, indent=2))
+    print(f"Saved {rp}")
 
 
 if __name__ == "__main__":

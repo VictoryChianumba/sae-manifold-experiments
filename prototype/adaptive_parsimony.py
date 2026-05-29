@@ -92,8 +92,9 @@ class GatedFactoredSAE(FactoredSAE):
     """
 
     def __init__(self, d_in, n_charts=12, coord_dim=3, gate_init=2.0,
-                 coord_norm=True):
-        super().__init__(d_in, n_charts, coord_dim, linear_charts=False)
+                 coord_norm=True, hard_routing=False):
+        super().__init__(d_in, n_charts, coord_dim, linear_charts=False,
+                         hard_routing=hard_routing)
         # gate_init=2.0 -> sigmoid ~0.88: charts start near-full and *prune* down.
         self.coord_norm = coord_norm
         self.gate_logits = nn.Parameter(
@@ -104,7 +105,15 @@ class GatedFactoredSAE(FactoredSAE):
         return torch.sigmoid(self.gate_logits)            # [M, cd] in (0,1)
 
     def forward(self, x, temp=1.0):
-        a = F.softmax(self.router(x) / temp, dim=-1)                  # [B, M]
+        # Same straight-through one-hot routing as FactoredSAE.forward, but the
+        # decoder chain runs on gated coords so we duplicate rather than call
+        # super().forward (the gating sits between coord_enc and charts[m]).
+        a_soft = F.softmax(self.router(x) / temp, dim=-1)             # [B, M]
+        if self.hard_routing:
+            a_hard = F.one_hot(a_soft.argmax(-1), self.n_charts).to(a_soft.dtype)
+            a = a_hard - a_soft.detach() + a_soft
+        else:
+            a = a_soft
         coords = self.coord_enc(x).view(-1, self.n_charts, self.coord_dim)
         if self.coord_norm:
             if self.training:
@@ -131,7 +140,10 @@ def train_factored_adaptive(Xtr_mix, coord_dim, lam_iso, lam_gate, seed,
     std = float(Xtr_mix.std()) + 1e-6
     Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = GatedFactoredSAE(d_in, n_charts, coord_dim, coord_norm=coord_norm).to(DEVICE)
+    # hard_routing=True so the model trains as a true atlas (single-chart
+    # recon per point) and factored_eval's dominant-chart restriction matches.
+    model = GatedFactoredSAE(d_in, n_charts, coord_dim, coord_norm=coord_norm,
+                             hard_routing=True).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
     # Mild Matryoshka: later dims cost more, so variance packs into dim 0 first.
@@ -142,15 +154,19 @@ def train_factored_adaptive(Xtr_mix, coord_dim, lam_iso, lam_gate, seed,
         perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
-            recon, a, gcoords = model(xb)         # gcoords [B,M,cd], a [B,M]
+            recon, a, gcoords = model(xb)         # a is one-hot (hard routing)
             mse = ((recon - xb) ** 2).sum(-1).mean()
-            ent_point = -(a * (a + eps).log()).sum(-1).mean()
-            usage = a.mean(0)
-            ent_usage = -(usage * (usage + eps).log()).sum()
+            # Entropy regularizers need soft routing for the gradient.
+            a_soft = F.softmax(model.router(xb), dim=-1)
+            ent_point = -(a_soft * (a_soft + eps).log()).sum(-1).mean()
+            usage_soft = a_soft.mean(0)
+            ent_usage = -(usage_soft * (usage_soft + eps).log()).sum()
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
 
-            w = a.detach()                                   # [B, M]
+            # Iso/parsimony weighting on the hard assignment (atlas semantics).
+            w = a.detach()                                   # [B, M] one-hot
             wsum = w.sum(0) + 1e-6                            # [M]
+            usage = a.mean(0)                                 # [M] for pars
 
             if lam_iso > 0:
                 # Isometry: fixed-target directional speed of each chart decoder,

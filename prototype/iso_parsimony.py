@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from data import CACHE_DIR
 from factored_sae import FactoredSAE
@@ -64,7 +65,11 @@ def train_factored_iso_pars(Xtr_mix, coord_dim, lam_iso, lam_pars, seed,
     std = float(Xtr_mix.std()) + 1e-6
     Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False).to(DEVICE)
+    # hard_routing=True: model is trained as a true atlas so factored_eval's
+    # dominant-chart restriction matches the training regime.  See the
+    # correction block in [[goodfire-sae-manifold-repro]] memory.
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False,
+                        hard_routing=True).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
 
@@ -72,15 +77,23 @@ def train_factored_iso_pars(Xtr_mix, coord_dim, lam_iso, lam_pars, seed,
         perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
-            recon, a, coords = model(xb)          # coords [B, M, cd], a [B, M]
+            recon, a, coords = model(xb)          # a is one-hot (hard routing)
             mse = ((recon - xb) ** 2).sum(-1).mean()
-            ent_point = -(a * (a + eps).log()).sum(-1).mean()
-            usage = a.mean(0)
-            ent_usage = -(usage * (usage + eps).log()).sum()
+            # Entropy regularizers need the *soft* routing — one-hot has 0
+            # entropy and no gradient signal for the router params.
+            a_soft = F.softmax(model.router(xb), dim=-1)
+            ent_point = -(a_soft * (a_soft + eps).log()).sum(-1).mean()
+            usage_soft = a_soft.mean(0)
+            ent_usage = -(usage_soft * (usage_soft + eps).log()).sum()
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
 
-            w = a.detach()                                   # [B, M]
+            # Iso/parsimony weighting stays on the *hard* assignment: each
+            # point contributes to exactly the chart it was routed to (which
+            # matches the atlas semantics; soft weights would smear the
+            # per-chart variance/speed across charts the point isn't on).
+            w = a.detach()                                   # [B, M] one-hot
             wsum = w.sum(0) + 1e-6                            # [M]
+            usage = a.mean(0)                                 # [M], hard-mean
 
             if lam_iso > 0:
                 # Isometry: fixed-target directional speed of each chart decoder.

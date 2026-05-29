@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
 from data import load_manifold_data, CACHE_DIR
@@ -109,7 +110,12 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, names, coord_dim,
     target = torch.from_numpy(target).to(DEVICE)
     tmask = torch.from_numpy(tmask).to(DEVICE)
 
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False).to(DEVICE)
+    # hard_routing=True: model is trained as a true atlas (single-chart recon
+    # per point) so that factored_eval's dominant-chart restriction matches the
+    # training regime.  See `fair_comparison.train_factored` for the bug this
+    # closes (was: soft mixture training + dominant-chart eval -> catastrophic).
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False,
+                        hard_routing=True).to(DEVICE)
     # Per-manifold probe: coord (R^cd) -> R^2; non-cyclic uses only component 0.
     probe_w = torch.nn.Parameter(torch.zeros(n_manifolds, coord_dim, 2, device=DEVICE))
     probe_b = torch.nn.Parameter(torch.zeros(n_manifolds, 2, device=DEVICE))
@@ -121,10 +127,13 @@ def train_factored_legible(Xtr_mix, mid_mix, y_mix, names, coord_dim,
         for i in range(0, N, batch):
             idx = perm[i:i + batch]
             xb, mb, tb, mkb = Xn[idx], mid[idx], target[idx], tmask[idx]
-            recon, a, coords = model(xb)          # coords [B, M, cd]
+            recon, a, coords = model(xb)          # a is one-hot (hard routing)
             mse = ((recon - xb) ** 2).sum(-1).mean()
-            ent_point = -(a * (a + eps).log()).sum(-1).mean()
-            usage = a.mean(0)
+            # Entropy regularizers need the *soft* routing (one-hot has 0 entropy
+            # and no gradient signal).
+            a_soft = F.softmax(model.router(xb), dim=-1)
+            ent_point = -(a_soft * (a_soft + eps).log()).sum(-1).mean()
+            usage = a_soft.mean(0)
             ent_usage = -(usage * (usage + eps).log()).sum()
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
 

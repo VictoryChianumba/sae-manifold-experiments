@@ -74,9 +74,10 @@ def load_mixture(manifolds):
 
 class FactoredSAE(nn.Module):
     def __init__(self, d_in, n_charts=12, coord_dim=3, hidden=64,
-                 linear_charts=False):
+                 linear_charts=False, hard_routing=False):
         super().__init__()
         self.n_charts, self.coord_dim = n_charts, coord_dim
+        self.hard_routing = hard_routing
         self.router = nn.Linear(d_in, n_charts)
         self.coord_enc = nn.Sequential(
             nn.Linear(d_in, 128), nn.GELU(),
@@ -93,7 +94,27 @@ class FactoredSAE(nn.Module):
         self.bias = nn.Parameter(torch.zeros(d_in))
 
     def forward(self, x, temp=1.0):
-        a = F.softmax(self.router(x) / temp, dim=-1)             # [B, M]
+        """Returns (recon, a, coords).
+
+        With ``hard_routing=False`` (default): ``a`` is the softmax over charts,
+        reconstruction is a soft mixture ``sum_m a_m g_m(z_m) + bias``.
+
+        With ``hard_routing=True``: ``a`` is one-hot in the forward pass
+        (straight-through estimator: ``a_hard - a_soft.detach() + a_soft`` lets
+        the soft gradient still update the router), so the reconstruction is
+        exactly ``g_{argmax}(z_{argmax}) + bias``.  This makes the
+        "dominant-chart-only" eval (see ``fair_comparison.factored_eval``) be
+        the same function the model was trained on, instead of forcing it into
+        an out-of-distribution regime it never saw.  Caller is responsible for
+        re-deriving the soft routing (``F.softmax(self.router(x))``) if it
+        needs gradients on entropy/balance terms — the one-hot ``a`` has
+        entropy 0 and provides no gradient signal for them."""
+        a_soft = F.softmax(self.router(x) / temp, dim=-1)        # [B, M]
+        if self.hard_routing:
+            a_hard = F.one_hot(a_soft.argmax(-1), self.n_charts).to(a_soft.dtype)
+            a = a_hard - a_soft.detach() + a_soft
+        else:
+            a = a_soft
         coords = self.coord_enc(x).view(-1, self.n_charts, self.coord_dim)
         recons = torch.stack([self.charts[m](coords[:, m])
                               for m in range(self.n_charts)], dim=1)  # [B,M,d]

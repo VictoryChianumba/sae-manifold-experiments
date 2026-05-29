@@ -284,22 +284,40 @@ def train_standard_sae(Xtr_mix, seed, expansion_factor=8, k=32,
 
 def train_factored(Xtr_mix, coord_dim, linear, seed, n_charts=12, epochs=120,
                    batch=512, lr=2e-3, lam_sparse=0.02, lam_balance=0.3):
+    """Train FactoredSAE with HARD routing (straight-through one-hot).
+
+    The reconstruction loss is computed on the single-chart output
+    ``g_{argmax}(z_{argmax}) + bias``, so the model learns to be a true
+    atlas-of-charts — each point committed to exactly one chart, that
+    chart's nonlinear decoder solely responsible for the recon.  This is
+    what makes ``factored_eval``'s matched-dim dominant-chart restriction
+    correspond to the model's actual behaviour (an earlier soft-routing
+    version trained on a mixture recon, and the dominant-chart eval put
+    the model in a regime it never visited; VE went to large negatives).
+
+    For the entropy/balance regularizers we re-derive ``a_soft`` directly
+    from the router logits — the one-hot ``a`` returned by the model has
+    entropy 0 and provides no gradient signal for those terms."""
     torch.manual_seed(seed); np.random.seed(seed)
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
     Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=linear).to(DEVICE)
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=linear,
+                        hard_routing=True).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
     for ep in range(epochs):
         perm = torch.randperm(N, device=DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
-            recon, a, _ = model(xb)
+            recon, _, _ = model(xb)
             mse = ((recon - xb) ** 2).sum(-1).mean()
-            ent_point = -(a * (a + eps).log()).sum(-1).mean()
-            usage = a.mean(0)
+            # Regularizers run on the *soft* routing — hard one-hot has no
+            # entropy gradient.  Encourages peaky-per-point + balanced-global.
+            a_soft = F.softmax(model.router(xb), dim=-1)
+            ent_point = -(a_soft * (a_soft + eps).log()).sum(-1).mean()
+            usage = a_soft.mean(0)
             ent_usage = -(usage * (usage + eps).log()).sum()
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
             opt.zero_grad(); loss.backward(); opt.step()
@@ -312,16 +330,24 @@ def train_factored(Xtr_mix, coord_dim, linear, seed, n_charts=12, epochs=120,
 def factored_eval(model, norm, Xtr, Xte, mean_m):
     """VE on test via dominant-chart reconstruction + the dominant chart's
     coords (for label decoding).  Dominant chart = modal argmax-router chart
-    over this manifold's TRAIN points, so train and test use the same chart."""
+    over this manifold's TRAIN points, so train and test use the same chart.
+
+    Matched-dim ceiling: reconstruction uses *only* the dominant chart's
+    decoder — ``g_dom(z_dom) + bias`` — so the comparison against PCA-cd /
+    SAE-greedy-cd is honest (coord_dim is the only capacity knob, curvature
+    is the only free variable).  Earlier versions returned the K-chart
+    mixture recon here, which silently inflated VE by ~K subspaces' worth
+    of slack and made factored_lin beat PCA at matched cd (the smell)."""
     mean, std = norm
     Xn_tr = torch.from_numpy((Xtr - mean) / std)
     Xn_te = torch.from_numpy((Xte - mean) / std)
     _, a_tr, _ = model(Xn_tr)
     dom = int(np.bincount(a_tr.argmax(-1).numpy(),
                           minlength=model.n_charts).argmax())
-    recon_te, _, coords_te = model(Xn_te)
+    _, _, coords_te = model(Xn_te)
     _, _, coords_tr = model(Xn_tr)
-    Xhat = recon_te.numpy() * std + mean
+    recon_te_dom = model.charts[dom](coords_te[:, dom, :]) + model.bias
+    Xhat = recon_te_dom.numpy() * std + mean
     ve = _ve(Xte, Xhat, mean_m)
     Ztr = coords_tr[:, dom, :].numpy()
     Zte = coords_te[:, dom, :].numpy()

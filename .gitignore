@@ -20,3 +20,9 @@ results/
 
 # vim swap files
 *.swp
+
+# secrets — .env got committed once at 03c82b7 (HF token leaked, scrubbed via
+# filter-branch on 2026-05-29). Don't repeat the mistake.
+.env
+.env.*
+!.env.example

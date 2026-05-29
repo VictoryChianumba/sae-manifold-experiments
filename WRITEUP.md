@@ -7,6 +7,55 @@ continues.*
 
 ---
 
+> ## ⚠️ RETRACTION-IN-PROGRESS (2026-05-29) — read before the TL;DR
+>
+> On 2026-05-29 we found a load-bearing bug in `fair_comparison.factored_eval`:
+> the reconstruction was computed from the **K-chart mixture** while the coords
+> for label decoding were taken from a **single dominant chart**. The "matched
+> coord_dim, curvature is the only free variable" framing was false — VE was
+> being scored over a ≤K×coord_dim subspace union (12 × 3 = 36-D) on the
+> factored rows while baselines used the advertised 3-D.
+>
+> The patch has two parts (both committed locally as of 2026-05-29):
+> 1. `factored_eval` now uses dominant-chart-only recon (`g_dom(z_dom) + bias`).
+> 2. `FactoredSAE` gained a `hard_routing` flag; `train_factored` uses it so the
+>    model is trained as a true atlas (single-chart recon per point, via
+>    straight-through one-hot). Without (2), (1) alone puts the model in a regime
+>    it never saw and VE goes to large negatives.
+>
+> **What the corrected 135M headline looks like (3 seeds, hard-routed atlas):**
+>
+> | manifold    | factored-NL | PCA  | Δ vs PCA |
+> |-------------|-------------|------|----------|
+> | **years**   | 0.51        | 0.39 | **+0.12** ★ |
+> | geography   | 0.30        | 0.52 | −0.21    |
+> | colors      | 0.59        | 0.74 | −0.15    |
+> | temperature | 0.66        | 0.79 | −0.14    |
+> | age         | 0.12        | 0.79 | −0.67    |
+>
+> The original "+0.45 on years, +0.25 on geography, +0.07 on colors" reduces to
+> **+0.12 on years only**. Curvature delta (NL − LIN) is still real (+0.30 to
+> +2.00 across manifolds), so the architecture works — it just doesn't clear
+> PCA-3 except on years.
+>
+> **What's affected:**
+> - §3, §4, §5, §6, §7 (135M sweeps): every factored VE row is bug-inflated;
+>   only §9b.1 (above) is currently re-run with the fix.
+> - §8 supervised legibility (`legible_coord`): coords were always dominant-chart
+>   (label-R² rows safe under the OLD architecture), but the underlying model
+>   was soft-routed. Re-run with hard-routed `train_factored_legible` pending —
+>   the baseline shifted (years 0.16 → 0.57), so the supervised lift will be
+>   smaller than the reported 0.89 jump.
+> - §9b.1–9b.6 (8B): same bug across the board, deferred until 135M corrected
+>   story is settled.
+> - §9b.7 steering (135M *and* 8B): **unaffected** — `steer.py` discards `fve`.
+>
+> Meta-lesson saved as `[[research-comparison-smell]]`. The text below this
+> banner is preserved verbatim for chronology; treat its numbers as historical
+> claims, not current findings, until each section is re-run and updated.
+>
+> ---
+
 ## 0. TL;DR
 
 We reproduced the core finding of Goodfire's *Do Sparse Autoencoders Capture Concept
@@ -15,26 +64,37 @@ over charts + per-chart curved coordinate) and stress-tested whether it actually
 recovers concept-manifold geometry better than a standard SAE — under a fair,
 held-out, matched-dimensionality protocol.
 
-The short version:
+The short version (**corrected 2026-05-29**, see retraction banner above for the
+process):
 
 - **Reproduced** the "dilution/shattering" effect: a linear SAE dictionary spreads a
   curved concept manifold across many partially-shared atoms; PCA captures it in a
-  handful of dimensions, the SAE's actual codes plateau far below.
-- **Curved charts beat the linear ceiling on fidelity.** Under a fair held-out
-  subspace-capture test at matched dimensionality, a nonlinear chart reconstructs
-  curved manifolds (years-helix, geography, colours) *better than the optimal linear
-  N-D subspace (PCA-N)*. On essentially-1-D manifolds (age, temperature) it loses, as
-  it should.
-- **Better reconstruction ≠ a legible coordinate.** The curved coordinate, left
-  unsupervised, decoded the ground-truth label *worse* than PCA — a Pareto win on
-  geometry but not on interpretability.
-- **A weak, concept-shaped label prior fixes legibility almost for free** (held-out
-  R² 0.16→0.89 on years at ~zero reconstruction cost), and a cyclic (cos/sin) variant
-  does the same for the wrap-around colours manifold.
-- **Label-free legibility is harder.** An isometry/arc-length prior alone *fails*;
-  adding a coordinate-parsimony prior *recovers* it — but only on genuinely
-  low-dimensional manifolds, and a single global strength over-collapses higher-D
-  ones. Qualified positive; adaptivity is the open frontier.
+  handful of dimensions, the SAE's actual codes plateau far below. *(unaffected by
+  the bug)*
+- **Curved charts beat the linear ceiling on fidelity — narrowly, on one manifold.**
+  Under the corrected matched-dim test (hard-routed atlas, dominant-chart recon), the
+  factored-nonlinear coord at coord_dim=3 beats PCA-3 on **years only** (VE 0.51 vs
+  0.39, +0.12). On geography, colours, temperature, age it lands below PCA-3. The
+  architecture's internal lever is intact: nonlinear charts beat linear charts by
+  +0.30 to +2.00 VE at matched coord_dim, so curvature does real work — it just isn't
+  enough to clear the linear ceiling except on the simplest curved manifold.
+- **Hard routing alone improves the unsupervised coordinate substantially.** Switching
+  the router from soft-mixture to straight-through one-hot lifts the dominant chart's
+  unsupervised label R² on years from 0.16 to 0.57 — a previously-hidden win that
+  emerged only after the bug forced us to retrain. The atlas-of-charts reading was
+  always the right reading; the soft router was diluting both fidelity and legibility.
+- **A weak, concept-shaped label prior pushes legibility past PCA on 4 of 5 manifolds
+  at near-zero VE cost.** λ=1 takes years 0.57→0.91 (PCA 0.75), geography 0.54→0.82
+  (PCA 0.60), temperature 0.78→0.93 (PCA 0.92), colours (cyclic cos/sin) 0.24→0.37
+  (PCA 0.30); mean held-out VE moves 0.44→0.46 (essentially free). Only age fails to
+  cross (small data, ~1-D linear — PCA's 0.91 is hard to beat).
+- **Label-free legibility is harder.** Isometry alone *fails* (collapses VE to −0.07
+  mean, doesn't help R²). Coordinate parsimony recovers years past PCA (0.57→0.83
+  unsupervised at pars=8) but degrades age and stays neutral elsewhere; adaptive
+  per-dim gates produce real-but-smaller lifts (years 0.21→0.50) and never cross
+  PCA. The bug-era "geography over-collapses to 0.01" failure was an artifact and is
+  gone. Unsupervised legibility frontier remains open: supervised remains the only
+  consistent route past PCA.
 - **The legible coordinate is causal at 135M; at 8B it modulates but does not
   control.** Steering moves the model's hot/cold readout monotonically in the
   concept direction at both scales (~13× a random control at 135M, ~6× at 8B,
@@ -42,10 +102,14 @@ The short version:
   (`logit(hot−cold)`: −1.33 → +0.04) while the 8B sweep stayed cold-dominant
   throughout (−1.31 → −0.79). At 135M this earned the framing "representation
   upgraded to control"; at 8B the data supports only "modulation with the right
-  sign, above noise, well short of a behavioural switch."
+  sign, above noise, well short of a behavioural switch." *(unaffected by the bug
+  — steer.py discards the bug-affected VE quantity.)*
 
 Throughout, the honest caveat: this is a **toy** (135M model, ~5k points, a research
-SAE, not a scalable one), and we changed the **lens (the SAE), not the model**.
+SAE, not a scalable one), and we changed the **lens (the SAE), not the model**. And:
+the 8B numbers in Part VIII (§9b.1–9b.6) were generated with the same bug; they are
+**not yet re-run** with the hard-routing fix and should be treated as inflated until
+they are.
 
 ---
 
@@ -195,38 +259,52 @@ per-point code." A linear dictionary can at best reach PCA-N; **only a curved de
 can exceed it.** So `factored_nl − PCA-N` isolates curvature, and
 `factored_nl − factored_lin` controls for clustering/parameters.
 
-### 6.2 Result — held-out VE at N=3 (mean over 3 seeds)
+### 6.2 Result — held-out VE at N=3 (mean over 3 seeds) — **corrected hard-route**
+
+The table below is the post-fix version (hard-routed atlas, dominant-chart recon).
+The pre-fix table is preserved in `cache/fair_comparison/results.prepatch.json` for
+auditability; in summary it claimed +0.45 / +0.25 / +0.07 NL−PCA wins on years /
+geography / colors, all of which evaporate once the K-chart mixture subspace is no
+longer being counted on the factored-NL side.
 
 | method | years | age | temperature | colors | geography |
 |---|---|---|---|---|---|
-| PCA (linear ceiling) | 0.39 | **0.79** | **0.79** | 0.74 | 0.52 |
+| PCA (linear ceiling) | 0.39 | **0.79** | **0.79** | **0.74** | **0.52** |
 | SAE-C4 geometric | 0.09 | 0.06 | 0.09 | 0.09 | 0.04 |
 | SAE-mix geometric | 0.10 | 0.27 | 0.50 | 0.53 | 0.20 |
 | SAE-mix statistical | 0.05 | 0.03 | 0.38 | 0.37 | 0.09 |
-| Factored **LINEAR** | 0.09 | −0.07 | 0.05 | 0.57 | 0.12 |
-| Factored **NONLINEAR** | **0.84** | 0.29 | 0.68 | **0.80** | **0.76** |
+| Factored **LINEAR** | 0.01 | −1.87 | 0.05 | 0.09 | 0.01 |
+| Factored **NONLINEAR** | **0.51** | 0.12 | 0.66 | 0.59 | 0.30 |
 
-### 6.3 Verdict — a split decision, leaning positive
+### 6.3 Verdict — a narrow positive on one manifold, plus an internal-lever finding
 
-1. **Curvature is decisive at matched dimensionality.** Nonlinear beats linear charts
-   at the *same* coord_dim on every manifold (Δ = +0.23 to +0.75), many× the seed
-   spread — the cleanest isolation of the paper's thesis: the failure is the
-   *straightness* of the atoms, not clustering or parameter count.
-2. **On curved manifolds, it beats even the linear ceiling.** Factored-NL exceeds
-   PCA-3 on years (+0.45), geography (+0.25), colours (+0.07). A curved 3-coord code
-   reconstructs held-out activations better than *any* linear 3-D subspace.
-3. **On 1-D manifolds it loses, by design.** age (−0.50) and temperature (−0.11):
-   PCA saturates, and the MLP *underfits* tiny data (age = 69 train points). The
-   held-out split correctly penalises curvature where there is none.
-4. **Better reconstruction ≠ a legible coordinate.** The secondary metric — held-out
-   label R² from the N-D representation, same regressor for all conditions — showed
-   the nonlinear coords decode the label *worse* than PCA or even the linear charts
-   (years: NL 0.16 vs PCA 0.75). So this is a Pareto move on **geometry fidelity** but
-   **not** on **interpretability/parsimony** — the bar we had set.
+1. **Curvature is decisive at matched coord_dim — as an *internal* lever.** Nonlinear
+   beats linear charts at the same coord_dim on every manifold (Δ = +0.50 on years,
+   +1.99 on age, +0.61 on temperature, +0.50 on colors, +0.30 on geography). Single-
+   chart linear decoders are very nearly incapable (≈0 VE) under hard routing — the
+   straightness of atoms IS the bottleneck, exactly as the paper argued. This isolation
+   survived the fix.
+2. **Curvature beats even the linear ceiling on years only.** Factored-NL clears
+   PCA-3 on **years (+0.12)** — the simplest curved manifold (a 1-D helix in d=576).
+   On geography (−0.21), colors (−0.15), temperature (−0.14), age (−0.67) it lands
+   below PCA-3. The corrected fidelity claim is one manifold, not three.
+3. **On near-linear or small-data manifolds, the single chart underfits.** age (69
+   train points, ~1-D linear) collapses dramatically (−0.67 vs PCA). The held-out
+   split correctly penalises curvature where there is none, *and* penalises the
+   under-trained MLP where data is thin.
+4. **Better reconstruction ≠ a legible coordinate — but the gap is smaller than we
+   first thought.** The secondary metric — held-out label R² from the N-D
+   representation, same regressor for all conditions — shows factored-NL coords
+   decode years 0.57 vs PCA 0.75 unsupervised, geography 0.54 vs 0.60, colors 0.24
+   vs 0.30. Hard routing alone closed roughly half of what the bug-era version had
+   reported as a fidelity-vs-legibility tension. There is still a tension, but it's
+   not the dramatic one originally claimed (was: years 0.16 vs 0.75 = a yawning
+   gap). The remaining tension is what Part V (weak label supervision) closes.
 
-This is the pivot: fidelity was won, but the interpretability payoff (the whole point
-of the paper) was *not demonstrated and partly contradicted*. Earning it became the
-next thread.
+The pivot survives in spirit, smaller in magnitude: fidelity is won on one manifold,
+not three; the legibility gap is genuine but narrower; the next thread (Part V)
+becomes more about *crossing PCA on legibility* than *rescuing legibility from a
+catastrophe*.
 
 ---
 
@@ -243,7 +321,7 @@ already-readable baseline rather than a rescue. The lever below — a weak per-
 manifold probe orienting the chart's coordinate at flat VE — is identical; what
 shrinks at scale is the gap it has to close.
 
-### 7.1 Weak label alignment (`legible_coord.py`)
+### 7.1 Weak label alignment (`legible_coord.py`) — **corrected hard-route numbers**
 
 Hypothesis: the unsupervised coordinate is free to *bend arbitrarily* through
 coordinate space; a weak orientation prior should straighten it without hurting
@@ -252,20 +330,29 @@ trained on **train labels only**, and sweep its weight `lam_label`. The reported
 label R² uses a *fresh* held-out probe (alignment only shapes the coordinate; R²
 still tests generalization).
 
-**Result (3 seeds, coord_dim = 3):**
+**Result (3 seeds, coord_dim = 3, hard-routed atlas) — post-fix numbers:**
 
-| lam_label | VE@3 (mean) | label R² (non-cyclic mean) | years | geography |
-|---|---|---|---|---|
-| 0 (unsup.) | 0.68 | 0.55 | 0.16 | 0.41 |
-| **1** | **0.68** | **0.89** | **0.89** | **0.80** |
-| 10 | 0.63 | 0.95 | 0.99 | 0.91 |
+| lam_label | VE@3 (mean) | label R² (non-cyclic mean*) | years | geography | colors (cyclic) |
+|---|---|---|---|---|---|
+| 0 (unsup.) | 0.44 | 0.66 | 0.57 | 0.54 | 0.24 |
+| **1** | **0.46** | **0.85** | **0.91** | **0.82** | **0.37** |
+| 10 | 0.40 | 0.95 | 0.98 | 0.91 | 0.56 |
+| PCA-3 reference | — | 0.79 | 0.75 | 0.60 | 0.30 |
 
-At `lam = 1`, held-out label R² jumps from 0.16→0.89 (years) with **essentially zero
-reconstruction cost**, and the curved coordinate **beats PCA on both axes at once**.
-The earlier tension was an artifact of the unsupervised coordinate bending freely; a
-weak prior removes it. Push too hard (`lam = 10`) and a real tradeoff reappears (VE
-erodes). **Caveat:** this uses *weak label supervision* — fine for "probe a known
-concept," not for unsupervised discovery.
+At `lam = 1`, held-out label R² mean climbs 0.66 → 0.85 with **VE going from 0.44 to
+0.46 — essentially zero reconstruction cost.** The curved coordinate crosses PCA on
+4 of 5 manifolds at this knee: years (0.91 > 0.75), geography (0.82 > 0.60),
+temperature (0.93 > 0.92), colours (cyclic cos/sin R² 0.37 > 0.30). Push to `lam =
+10` and a real tradeoff appears (VE −0.04 mean). **Caveat:** this uses *weak label
+supervision* — fine for "probe a known concept," not for unsupervised discovery.
+
+**The "where did the gain come from" decomposition.** The bug-era version of this
+table reported a 0.16→0.89 jump on years, framed as "weak supervision is the magic."
+With the fix, the unsupervised baseline is *already* 0.57 (hard routing alone
+provides ~0.41 of the originally-attributed +0.73 lift). The supervised piece adds a
+clean further +0.34 (0.57→0.91). Two real, separable effects — hard routing fixes
+the architecture, weak supervision orients the axis — instead of one conflated one.
+Both are still genuine.
 
 **What it looks like** (`viz_coord.py` → `cache/viz/coord_vs_label.png`): plotting
 the held-out probe's *predicted* label against the *true* label makes the R² concrete
@@ -320,7 +407,7 @@ the concept. (We also caught and fixed a subtlety mid-stream: a "constant speed"
 variance-only penalty has a trivial `z→const` collapse minimizer; a *fixed* unit-ish
 target avoids it.)
 
-### 8.2 Isometry + coordinate parsimony (`iso_parsimony.py`) — a qualified positive
+### 8.2 Isometry + coordinate parsimony (`iso_parsimony.py`) — qualified positive (corrected)
 
 If the problem is spare dimensions to wind in, also **minimize the number of active
 coordinate dims**. We add a **participation-ratio** penalty
@@ -328,29 +415,38 @@ coordinate dims**. We add a **participation-ratio** penalty
 active-dim count (an L1-on-std penalty can be gamed by shrinking the coord and growing
 the decoder; PR cannot). Still label-free. We grid `(lam_iso, lam_pars)`.
 
-**Result (3 seeds, held-out label R², no labels in training):**
+**Result (3 seeds, held-out label R², hard-routed, no labels in training):**
 
 | config (iso, pars) | years | temperature | geography | colors | active-dims (PR) |
 |---|---|---|---|---|---|
-| (0, 0) unsup. | 0.16 | 0.79 | 0.41 | 0.13 | ~2.3 |
-| (1, 8) iso+parsimony | **0.70** | **0.89** | 0.08 | 0.07 | ~1.4 |
+| (0, 0) unsup. | 0.57 | 0.78 | 0.54 | 0.24 | ~2.2 |
+| (0, 8) parsimony alone | **0.83** ✅ | 0.78 | 0.57 | 0.13 | ~1.2 |
+| (1, 8) iso+parsimony | **0.82** ✅ | 0.63 | 0.52 | 0.11 | ~1.4 |
 | PCA reference | 0.75 | 0.92 | 0.60 | 0.30 | — |
 
-The active-dim count collapses (~2.3→~1) as designed, and the effect **splits cleanly
-by intrinsic dimension**:
+What survives and what doesn't, vs. the bug-era version of this table:
 
-- **Works, label-free, on low-D manifolds:** years 0.16→0.70 and temperature
-  0.79→0.89 — near their PCA references, and years approaches the *supervised* 0.89.
-  *The first time the unsupervised route recovered real legibility.*
-- **Backfires on multi-D manifolds:** a single global parsimony weight over-collapses
-  geography (~2-3D sphere: 0.41→0.01) and colours (2-D cyclic: →0.07), destroying both
-  their legibility and VE — you cannot force a sphere onto one straight axis.
-- **Aggregate is flat** (gains and losses cancel) and VE drops as parsimony bites.
+- **Years crosses PCA, label-free.** Parsimony at `pars=8` pushes years 0.57→0.83
+  (above PCA's 0.75). This is the headline survivor: the unsupervised legibility
+  route works on the simplest curved manifold. (Bug-era: years 0.16→0.70, almost
+  reaching PCA — corrected version cleanly clears it.)
+- **The "geography over-collapses to 0.01" failure was a bug artifact.** Under hard
+  routing, geography barely moves under parsimony (0.54→0.57); colours stays low
+  (0.24→0.13). The dramatic differential-dim collapse story is gone. Active-dim
+  counts still drop ~2.2→~1.2 with parsimony, just without the catastrophic
+  legibility collapse.
+- **New failure mode visible: age now degrades** (0.73→0.48 at pars=8). The bug
+  was masking this — age R² stayed flat at 0.84 across configs. With honest baselines,
+  parsimony hurts the small-data near-linear manifold (age = 69 train points).
+- **Iso alone (lam_iso=1, lam_pars=0): still negative.** Mean R² 0.65 (~baseline);
+  mean VE collapses to −0.07. Iso doesn't help legibility, hurts reconstruction.
+  Replicates the §8.1 finding without needing a separate experiment.
 
-**Verdict:** parsimony *was* the missing ingredient the isometry post-mortem
-predicted — but its strength must match the manifold's intrinsic dimension, which a
-global knob can't know. **Intrinsic-dimension-adaptive parsimony is the next test**
-(§8.3 below); §9b.4 confirms the same low-D/multi-D split holds at 8B.
+**Verdict:** parsimony was the missing ingredient the isometry post-mortem
+predicted — it produces a single clean label-free win (years > PCA) and is otherwise
+neutral or mildly harmful. The original "differential-dim-need" framing
+("parsimony helps low-D, hurts multi-D") was partly a bug artifact (geography
+collapse) and partly real (years win). What remains is one solid unsupervised win.
 
 ### 8.3 Intrinsic-dimension-adaptive parsimony (`adaptive_parsimony.py`) — a qualified negative
 
@@ -366,31 +462,35 @@ which a global knob cannot. (Anti-gaming: each coordinate dim is normalized by a
 running-std buffer before gating, so the L1 cost can't be dodged by shrinking the
 coordinate and inflating the decoder — the failure mode that motivated PR.)
 
-**Result (3 seeds, label-free, grid over `lam_iso ∈ {0,1}` × `lam_gate ∈ {0,2,4,8}`):**
+**Result (3 seeds, hard-routed, label-free, grid over `lam_iso ∈ {0,1}` × `lam_gate ∈ {0,2,8}`) — corrected:**
 
-| config | years | temperature | geography | colors | active-dims (Σgates, dom. chart) |
-|---|---|---|---|---|---|
-| gate=0 (gated baseline) | 0.64 | 0.82 | 0.38 | 0.17 | ~2.67 |
-| gate=8, iso=0 | 0.67 | 0.78 | 0.30 | 0.14 | ~1.3 |
-| gate=8, iso=1 | 0.62 | 0.80 | 0.45 | 0.23 | ~1.3–1.7 |
-| *global-PR (iso=1,p=8), for ref* | *0.70* | *0.89* | ***0.08*** | ***0.07*** | *~1.4* |
+| config | years | age | temp | geography | colors | active-dims (Σgates, dom. chart) |
+|---|---|---|---|---|---|---|
+| gate=0 (gated baseline) | 0.21 | 0.79 | 0.83 | 0.35 | 0.23 | ~2.65 |
+| gate=2, iso=0 | 0.46 | 0.80 | 0.81 | 0.48 | 0.25 | **differentiated: years 1.94, geog 1.21, colors 1.41** |
+| gate=8, iso=0 | **0.50** | 0.74 | 0.83 | 0.43 | 0.25 | ~1.2–1.4 |
+| gate=8, iso=1 | 0.63 | 0.83 | 0.72 | 0.32 | 0.23 | ~1.3–1.6 |
+| *iso_parsimony (iso=0, pars=8), for ref* | *0.83 ✅* | *0.48* | *0.78* | *0.57* | *0.13* | *~1.2* |
+| *PCA-3 reference* | 0.75 | 0.91 | 0.92 | 0.60 | 0.30 | — |
 
-Two honest takeaways:
+Two takeaways under the corrected numbers:
 
-1. **The explicit goal is met, but only narrowly.** Adaptive gates do **not**
-   over-collapse the multi-D manifolds the way the global PR knob did: geography stays
-   **0.30–0.45** (vs PR's 0.08) and colours **0.14–0.23** (vs 0.07). So adaptivity
-   fixes the over-collapse. **But the gate penalty is nearly inert as a legibility
-   lever** — sweeping `lam_gate` barely moves held-out R² (the non-cyclic mean is flat
-   ~0.57–0.63), the gates close **roughly uniformly** to ~1.3 active dims for *every*
-   manifold (no clean intrinsic-dimension differentiation), and VE erodes mildly. It
-   *avoids harm* rather than producing the targeted differential dim allocation.
-   *Why:* in this weak 135M geometry the nonlinear charts reconstruct even geography
-   fine from ~1 effective dim (its VE holds ~0.64 as gates collapse 2.67→1.3), so there
-   is little differential reconstruction pressure for the gates to grab onto — the
-   manifolds are barely "multi-D" here. The global PR knob hurt geography not by
-   removing *needed* reconstruction dims but by forcing PR→1 so hard the single axis
-   *wound*; the gentler gate doesn't force that, so geography survives — by doing less.
+1. **The qualified-negative essentially holds, with one rehabilitated detail.** Gates
+   now produce a real R² lift on years (0.21→0.50 at gate=8 vs the bug-era +0.03),
+   but the lift never crosses PCA on any individual manifold. Mean* non-cyclic R²
+   moves 0.55→0.62 — a real but small unsupervised improvement. iso_parsimony still
+   wins on years (0.83 vs 0.50).
+2. **The "uniform gate closure" claim is partially refuted — but in the wrong
+   direction for the hypothesis.** At gate=2, gates DO differentiate: geography
+   collapses most (1.21 active), years stays highest (1.94), colors in between
+   (1.41). But this is the *opposite* of intrinsic-dim allocation — geography
+   (claimed ~2-3D) should keep *more* dims active if the hypothesis were right, not
+   fewer. The actual pattern reflects per-chart needs: geography spreads across
+   multiple charts (each chart sees a smaller piece and needs fewer dims), while
+   years routes to one chart that must bend a whole helix and so needs the dims. So
+   the differential allocation exists but it's *routing-driven*, not
+   intrinsic-dim-driven. The targeted hypothesis is not vindicated; what we got
+   instead is an honest mechanistic surprise.
 
 2. **The one genuinely new lever is incidental, and it's a *trade*.** Isolated with
    `--no-coord-norm` (gate=0, iso=0, 3 seeds), the per-dim **coordinate normalization**
@@ -772,28 +872,41 @@ mid-layer; the layer-sensitivity sweep (#13 follow-on) is the natural next test.
 
 ---
 
-## 10. What worked, what didn't (at a glance)
+## 10. What worked, what didn't (at a glance) — **corrected 2026-05-29**
 
 | Step | Outcome |
 |---|---|
 | Reproduce dilution/shattering | ✅ Reproduced (SAE codes plateau ~17% vs PCA 94% @16-D) |
-| Curved charts vs linear, matched dim, held-out | ✅ Curvature wins on fidelity; beats PCA on curved manifolds |
-| Curved charts on 1-D manifolds | ❌ Underfit (PCA already saturates; tiny data) |
-| Unsupervised curved coordinate → legible? | ❌ Worse label-decoding than PCA |
-| Weak label alignment → legible? | ✅ R² 0.16→0.89 at ~zero VE cost; beats PCA on both axes |
+| Curved charts vs linear charts at matched coord_dim | ✅ Curvature delta NL−LIN intact: +0.30 to +2.00 across manifolds. The straightness of atoms IS the bottleneck — the cleanest isolation of the paper's thesis. |
+| Curved charts vs PCA at matched coord_dim | ◐ Narrow: factored-NL clears PCA-3 on **years only (+0.12)**. On geography/colors/temperature/age it lands below PCA-3. (Bug-era claim: +0.45 / +0.25 / +0.07 — retracted.) |
+| Hard routing (straight-through one-hot) vs soft mixture | ✅ Substantial unsupervised-legibility lift: years R² 0.16→0.57, geography 0.41→0.54, colors 0.13→0.24 just by switching the router. Previously hidden by the bug. |
+| Weak label alignment → legible? | ✅ λ=1 crosses PCA on 4/5 manifolds at VE cost ≈0 (0.44→0.46 mean): years 0.91 (PCA 0.75), geography 0.82 (PCA 0.60), temperature 0.93 (PCA 0.92), colors 0.37 (PCA 0.30). Age (0.75 vs PCA 0.91) is the one miss. |
 | Cyclic scoring (colours) | ✅ Honest scoring (artifact removed); ⚠️ scoring alone insufficient |
-| Cyclic alignment (colours) | ✅ Crosses PCA at lam≈1; ⚠️ still hardest manifold |
-| Unsupervised isometry alone | ❌ Negative; arc-length ≠ linear-in-coordinate |
-| Isometry + parsimony (global) | ◐ Qualified positive: works on low-D, over-collapses multi-D |
-| Adaptive parsimony (learned per-dim gates) | ◐/❌ Qualified negative: cures over-collapse but gates close uniformly (no intrinsic-dim differentiation); incidental finding = coordinate normalization trades VE for years legibility |
-| Steering at 135M (Part VII) | ✅ Causal *control*: monotone hot/cold shift that crosses the decision boundary, ~13× a random control |
-| **Real-model validation (Llama-3.1-8B, layer 16)** | ✅ Shattering reproduces (14×); factored-NL still beats PCA on average (+0.10 mean VE@3); **+0.42 VE on geography**, **+0.09 on years**; factored-LIN collapses (geometry, not parameter slack). The legibility/parsimony Pareto results (§9b.3–5) live in a narrow noise band and need more seeds before row-level claims |
-| Steering at 8B (§9b.7) | ◐ Modulation, not control: monotone +0.090/α, ~6× random, but never crosses the decision boundary across α∈[−3, +3] (135M's same sweep did). One seed/manifold/contrast — proof-of-concept only |
+| Cyclic alignment (colours) | ✅ Crosses PCA at lam≈1 (0.37 vs 0.30) |
+| Unsupervised isometry alone | ❌ Negative; arc-length ≠ linear-in-coordinate. Replicated in iso_parsimony's iso=1, pars=0 row (mean VE −0.07). |
+| Isometry + parsimony (global) | ◐ Qualified positive narrowed: parsimony pushes **years past PCA label-free (0.57→0.83)**. Bug-era "geography over-collapses" was an artifact and is gone. New failure mode: parsimony hurts age (0.73→0.48). |
+| Adaptive parsimony (learned per-dim gates) | ◐ Qualified negative holds. Years lift now real (0.21→0.50 at gate=8, vs bug-era +0.03) but doesn't cross PCA. Gate differentiation exists at gate=2 but is **routing-driven (geography 1.21 active, years 1.94), not intrinsic-dim-driven** — opposite of the original hypothesis. |
+| Steering at 135M (Part VII) | ✅ Causal *control*: monotone hot/cold shift that crosses the decision boundary, ~13× a random control. **Unaffected by the bug** — `steer.py` discards `fve`. |
+| **Real-model validation (Llama-3.1-8B, layer 16)** | ⚠️ **All 8B numbers still pre-fix.** §9b.1–9b.6 were generated with the buggy `factored_eval`; they are not yet re-run under hard routing. Treat them as inflated until the RunPod re-run lands. |
+| Steering at 8B (§9b.7) | ◐ Modulation, not control: monotone +0.090/α, ~6× random, never crosses the decision boundary across α∈[−3, +3] (135M's same sweep did). One seed/manifold/contrast — proof-of-concept only. **Unaffected by the bug.** |
 
 ---
 
 ## 11. Limitations (read this before believing anything)
 
+- **The factored_eval bug (2026-05-29).** For most of the project the headline
+  fidelity numbers were generated by an internally-inconsistent eval that scored
+  reconstruction over the K-chart mixture (effective ~36-D subspace at K=12,
+  coord_dim=3) while taking coords for label decoding from a single dominant chart
+  (3-D). The "matched coord_dim" framing was false on the factored-NL VE side.
+  Fix landed 2026-05-29: dominant-chart-only recon + hard-routing training (so the
+  model is actually a true atlas, not a soft mixture). The 135M experiments above
+  reflect the fix; the 8B experiments in Part VIII do **not yet**. The biggest
+  lesson is methodological (saved as `research-comparison-smell` memory): when a
+  matched-dim comparison shows a margin big enough to be the headline, audit what
+  the matching constraint constrains *at metric time*, not just in the function
+  signature — branch-dimension is the trap. See the retraction banner at the top
+  of this document for the propagation analysis and which specific claims moved.
 - **Toy scale (Parts I–VII).** SmolLM2-135M (not Llama-3.1-8B), ~5k points total,
   manifolds as small as 56–199 points. `age` (69 train points) is consistently
   unreliable; `days` was dropped entirely. Three seeds is few; the steering result is
@@ -846,27 +959,28 @@ The fair-comparison "five-point" requirements are **all met**:
 
 The broader **"definition of improvement"** bar (a Pareto move on *geometry fidelity ×
 interpretability/parsimony* at matched sparsity & capacity, held-out, ideally on a
-real model, **bonus:** a causal/steering leg) is now **largely met**:
+real model, **bonus:** a causal/steering leg) — **status after the 2026-05-29 fix:**
 
-- Geometry fidelity ✅ (at both scales); interpretability ✅ *with* weak
-  supervision at 135M, ◐ unsupervised at 135M, **and uncertain at 8B** because
-  the legibility metrics there sit in a narrow noise band (§9b.3 caveat).
-- **Bonus causal/steering leg — split by scale.** At 135M (Part VII) the legible
+- **Geometry fidelity at 135M** — ◐ narrow: factored-NL beats PCA-3 on **years
+  only (+0.12)**. The bug-era "wins on years/geography/colors" reduces to one
+  manifold under matched-dim. The curvature-vs-linear internal lever (NL−LIN
+  delta +0.30 to +2.00) holds cleanly.
+- **Interpretability at 135M** — ✅ supervised (4/5 manifolds cross PCA at λ=1,
+  near-zero VE cost); ◐ unsupervised (parsimony pushes years past PCA; nothing
+  else crosses). Hard routing alone provides a substantial unsupervised baseline
+  lift (years 0.16→0.57) — a previously-hidden finding the bug had masked.
+- **Causal/steering leg — split by scale.** At 135M (Part VII) the legible
   axis is a causal *control* handle: monotone hot/cold shift that crosses the
   decision boundary, ~13× a random control. At 8B (§9b.7) the same recipe
   produces *modulation only*: monotone +0.090/α, ~6× random, but the readout
   never flips across α∈[−3, +3]. One seed/manifold/contrast at each scale;
-  proof-of-concept only.
-- **"Ideally on a real model" — partial.** Part VIII §9b.1 (held-out VE-vs-N
-  curves) is the strongest leg: shattering reproduces (~14× SAE-vs-PCA ratio),
-  factored-NL still beats PCA in mean VE@3, factored-LIN collapses at 8B
-  (confirming the win is curvature, not parameter slack). The legibility +
-  parsimony 8B Pareto plots (§9b.3–5) are in a noise band and need more seeds.
-  Steering (§9b.7) is a single proof-of-concept; the "control" framing earned
-  at 135M does not transfer to 8B without a wider α sweep or a flip
-  demonstration. **Anchor against the Goodfire paper at 8B** (`subspace_capture.py`
-  / `manifold_viz.py`) before leaning further on any of the 8B numbers — see
-  task #20.
+  proof-of-concept only. **Both legs unaffected by the bug** (`steer.py` discards
+  the VE quantity).
+- **"Ideally on a real model" — currently in regression.** Part VIII §9b.1–9b.5
+  were generated pre-fix; the 8B factored VE numbers are bug-inflated by the same
+  mechanism (mixture-over-K-charts vs dominant-chart-3-D). The RunPod re-run is
+  the immediate next item if the 8B claims are to be defended. Steering at 8B
+  (§9b.7) is unaffected.
 
 **Explicitly still on the list / things we have not yet done:**
 

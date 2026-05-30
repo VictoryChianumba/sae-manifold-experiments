@@ -55,7 +55,7 @@ READOUT_PROMPTS = [
     "Honestly, the temperature right now is extremely",
 ]
 POS_WORD, NEG_WORD = " hot", " cold"      # +v should raise hot, lower cold
-ALPHAS = [-3, -2, -1, 0, 1, 2, 3]
+ALPHAS = [-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6]
 
 
 def legible_steering_vector(coord_dim=3, seed=0):

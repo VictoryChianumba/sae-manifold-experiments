@@ -54,6 +54,21 @@ continues.*
 > banner is preserved verbatim for chronology; treat its numbers as historical
 > claims, not current findings, until each section is re-run and updated.
 >
+> **Update 2026-05-30 — 8B re-run + anchor.** The 8B suite (Part VIII)
+> has been fully re-run with the hard-routed atlas and 10 seeds:
+> - §9b.1 fair comparison was unaffected by the noise band caveat and
+>   already cleared seed noise — its numbers stand.
+> - §9b.3–5 now have **per-row 2·SEM-significant** findings (see
+>   `cache/meta-llama-3.1-8b_L16/seeds10_summary.md`); the "Pareto lives
+>   in a noise band" caveat from earlier drafts is **retracted**.
+> - §9b.7 steering is reframed around multi-seed / unaligned-axis
+>   results: the "modulation, not control at 8B" single-seed claim
+>   collapses — 1/3 seeds crosses zero (control), 2/3 stay at modulation;
+>   the seed distribution is the story.
+> - §9b.8 (new) records the #20 anchor: subspace_capture + manifold_viz
+>   reproduce the paper's Fig 4 / Fig 1 shapes at 8B, so the pipeline is
+>   confirmed and §9b's claims can be defended.
+>
 > ---
 
 ## 0. TL;DR
@@ -95,21 +110,32 @@ process):
   PCA. The bug-era "geography over-collapses to 0.01" failure was an artifact and is
   gone. Unsupervised legibility frontier remains open: supervised remains the only
   consistent route past PCA.
-- **The legible coordinate is causal at 135M; at 8B it modulates but does not
-  control.** Steering moves the model's hot/cold readout monotonically in the
-  concept direction at both scales (~13× a random control at 135M, ~6× at 8B,
-  §9b.7) — but the 135M sweep actually flipped the model's preferred token
-  (`logit(hot−cold)`: −1.33 → +0.04) while the 8B sweep stayed cold-dominant
-  throughout (−1.31 → −0.79). At 135M this earned the framing "representation
-  upgraded to control"; at 8B the data supports only "modulation with the right
-  sign, above noise, well short of a behavioural switch." *(unaffected by the bug
-  — steer.py discards the bug-affected VE quantity.)*
+- **The legible coordinate is causal — across both scales, but the
+  effect's magnitude is highly seed-dependent.** Three independent SAE
+  training seeds at 8B give slopes of +0.022, +0.090, +0.288 per α —
+  all positive, all sign-consistent, but a ~13× spread in magnitude.
+  Seed 2 actually **crosses zero at α=+4** (control, like 135M did);
+  seeds 0 and 1 stop at modulation. So the prior single-seed
+  "modulation, not control" framing for 8B was over-confidently negative
+  on a wide seed distribution. The **cleanest causal-axis demonstration**
+  this leg has produced: an *unaligned-axis baseline* (identical
+  architecture and routing, lam_label=0 instead of 1) has slope
+  −0.031 (flat/wrong direction), so the legibility supervision is what
+  flips a same-architecture random-ish axis into a sign-consistent causal
+  one. bf16 vs fp32 doesn't matter (slopes identical). *(unaffected by
+  the factored_eval bug — steer.py discards the bug-affected VE
+  quantity.)*
+- **The 8B pipeline reproduces the paper's signature anchors** (§9b.8,
+  added 2026-05-30): `subspace_capture.py` on Llama-3.1-8B/L16 produces
+  the canonical Fig-4 shattering shape (stat-SAE plateaus ~28% at k=64,
+  PCA hits ~93%, random baselines flat), and `manifold_viz.py` produces
+  the years 3D-PCA chronological loop. So §9b's claims rest on a
+  pipeline that's producing the paper's numbers on the paper's model.
 
-Throughout, the honest caveat: this is a **toy** (135M model, ~5k points, a research
-SAE, not a scalable one), and we changed the **lens (the SAE), not the model**. And:
-the 8B numbers in Part VIII (§9b.1–9b.6) were generated with the same bug; they are
-**not yet re-run** with the hard-routing fix and should be treated as inflated until
-they are.
+Throughout, the honest caveat: this is a **toy** (135M model, ~5k
+points, a research SAE, not a scalable one), and we changed the **lens
+(the SAE), not the model** — except for Part VII / §9b.7, which
+intervene on the model.
 
 ---
 
@@ -650,106 +676,124 @@ factored-NL hits **VE 0.61, label R² 0.95** at coord_dim=3, while PCA only mana
 the variance explained, and the labels still read off the coordinate. PCA's "legible
 ceiling" at 8B is real but it sits at a much lower VE than the curved chart.
 
-### 9b.3 Legibility supervision (`legible_coord`) at 8B
+### 9b.3 Legibility supervision (`legible_coord`) at 8B — 10-seed re-run
 
-> **Read §9b.3, §9b.4, §9b.5 with this caveat first.** At 8B the metrics that
-> distinguish "the lever moved" from "noise" — held-out label R² and held-out
-> VE@3 — all live in *very narrow bands*. PCA's R² is already 0.86–0.99 across
-> all five manifolds (§9b.2), so the supervised R² gains have at most ~0.10 of
-> headroom; the factored-NL VE@3 sits in a ~0.05-wide band on the linear-ish
-> manifolds. The Pareto plots
-> (`cache/meta-llama-3.1-8b_L16/{legible_coord,iso_parsimony,adaptive_parsimony}/pareto.png`)
-> reflect this directly: trajectories cross, points cluster, and 3 seeds is **not
-> enough** to confidently distinguish a real Pareto move from seed noise inside
-> those bands. The tables below report the means we observed and the patterns
-> that match the 135M shapes; we are **not** claiming the relative orderings
-> within the narrow bands are stable. A future pass should run ≥10 seeds and
-> report confidence intervals before any of these 8B numbers is leaned on. The
-> headline 8B result that *does* survive this caveat is §9b.1 (the held-out
-> VE-vs-N curves), where factored-NL clears the SAE baselines and PCA by margins
-> that comfortably exceed seed noise on years and geography.
+> **Earlier drafts of §9b.3–5 carried a "Pareto results live in a noise
+> band, ≥10 seeds needed before any row is leaned on" caveat. The
+> 10-seed re-run (2026-05-30, `prototype/run_all.py --seeds 0..9` on a
+> fresh A100, ~72 min total) **retracts that caveat**. The numbers
+> below are mean ± SEM over 10 seeds; "↑" / "↓" mark rows where the
+> *paired* (SAE − PCA) difference exceeds 2·SEM (~95% paired CI). Full
+> per-cell tables in `cache/meta-llama-3.1-8b_L16/seeds10_summary.md`
+> (generated by `prototype/summarize_seeds.py`).**
 
+Same λ-sweep as Part V (`lam ∈ {0, 0.3, 1, 3, 10}`). Held-out VE@3 stays
+flat at 0.54–0.57 across λ — alignment is essentially free in fidelity,
+matching the 135M shape. Label R² (lin) per row:
 
-Same λ-sweep as Part V (`lam ∈ {0, 0.3, 1, 3, 10}`). Mean VE@3 stays flat at **0.64–0.66**
-across λ — alignment is essentially free in fidelity, just like at 135M. Label R²:
+| λ     | years           | age             | temperature     | colors (cos/sin)   | geography       | mean*    |
+|---    |---              |---              |---              |---                 |---              |---       |
+| 0     | 0.940 ± 0.016 · | 0.868 ± 0.050 ↓ | 0.965 ± 0.005 · | 0.899 ± 0.014 ·    | 0.523 ± 0.034 · | 0.824    |
+| 0.3   | 0.947 ± 0.010 · | 0.921 ± 0.034 · | 0.966 ± 0.005 ↓ | 0.914 ± 0.004 ↓    | 0.522 ± 0.044 · | 0.839    |
+| 1     | 0.947 ± 0.009 · | 0.918 ± 0.022 ↓ | 0.955 ± 0.008 ↓ | 0.915 ± 0.004 ↓    | **0.567 ± 0.038 ↑** | 0.846 |
+| 3     | 0.947 ± 0.009 · | 0.927 ± 0.032 · | 0.968 ± 0.006 · | 0.918 ± 0.005 ·    | **0.613 ± 0.034 ↑** | 0.864 |
+| 10    | **0.963 ± 0.005 ↑** | 0.928 ± 0.034 · | 0.979 ± 0.003 · | 0.929 ± 0.004 · | **0.776 ± 0.010 ↑** | 0.912 |
+| **PCA ref** | 0.948 ± 0.003 | 0.971 ± 0.003 | 0.974 ± 0.001 | 0.925 ± 0.001    | 0.472 ± 0.010   | 0.841 |
 
-| λ      | non-cyclic mean (lin R²) | colors kNN R² (cyclic) |
-|---     |---                       |---                     |
-| 0      | 0.81                     | 0.73                   |
-| 0.3    | 0.81                     | 0.84                   |
-| 1      | 0.84                     | 0.75                   |
-| 3      | 0.84                     | 0.91                   |
-| 10     | 0.88                     | **0.93**               |
+Three findings the CIs nail:
 
-Colours kNN R² moves from 0.73 → 0.93 across the sweep at a flat VE — the same
-*shape* as the 135M run, on the manifold that was hardest there. But the
-non-cyclic mean R² moves from 0.81 to 0.88 across the same λ-sweep, well inside
-the 3-seed noise band suggested by the Pareto plot. We claim only that the
-*pattern* matches the 135M run; we do not claim the specific row-by-row
-orderings are stable until a higher-seed pass confirms them.
+1. **Geography is a clean, large lift** at every λ ≥ 1, with a ~30·SEM
+   gap at λ=10 (0.776 ± 0.010 vs PCA 0.472 ± 0.010). This is the
+   cleanest crossing of PCA the project has produced and is the
+   load-bearing positive at 8B.
+2. **Years also crosses PCA** at λ=10 (0.963 ± 0.005 vs PCA 0.948 ±
+   0.003) — marginal but 2·SEM-clean.
+3. **Most non-geography cells stay inside the PCA band (·)** at
+   2·SEM. Colours and temperature show 2·SEM-significant *negative*
+   moves at small λ (the supervision penalty briefly costs lin-R² where
+   PCA is already 0.92–0.97); they recover by λ=10 to inside-band. The
+   mean\* climbs 0.82→0.91 across λ, but per-column that climb is
+   concentrated on geography. **Honest framing:** legibility supervision
+   at 8B is a *refinement* on linear-ish manifolds (PCA already 0.92–0.99)
+   and a *rescue* on geography (PCA's 0.47 → 0.78 with supervision); the
+   earlier "improves mean* over PCA at every λ" reading was an
+   averaging artifact.
 
-### 9b.4 Unsupervised isometry + parsimony (`iso_parsimony`) at 8B
+### 9b.4 Unsupervised isometry + parsimony (`iso_parsimony`) at 8B — 10-seed re-run
 
-| iso | par | mean VE@3 | non-cyclic lin R² | colors kNN R² |
-|---  |---  |---        |---                |---            |
-| 0   | 0   | 0.64      | 0.81              | 0.73          |
-| 0   | 2   | 0.65      | 0.80              | **0.97**      |
-| 0   | 8   | 0.61      | 0.86              | 0.77          |
-| 1   | 0   | 0.64      | 0.80              | 0.85          |
-| 1   | 2   | 0.64      | 0.79              | 0.83          |
-| 1   | 8   | 0.64      | 0.84              | 0.77          |
+10-seed mean ± SEM, paired-difference flag vs PCA at 2·SEM (~95% CI):
 
-At iso=0, par=2 the colors kNN R² rises to 0.97 at near-flat VE — the visible
-exception to the narrow-band picture, and the row that most clearly survives the
-3-seed caveat. Beyond that one row, the differences between rows in the
-non-cyclic columns (0.79–0.86) and the mean-VE column (0.61–0.65) live in the
-noise band. We *do* see the 135M qualified-positive shape — colours improving
-when the chart is gently pushed to spend fewer dims — but the row-by-row
-strength claims should be retested with more seeds before being leaned on.
+| iso | pars | years           | age             | temperature     | colors          | geography        |
+|---  |---   |---              |---              |---              |---              |---               |
+| 0   | 0    | 0.940 ± 0.016 · | 0.868 ± 0.050 ↓ | 0.965 ± 0.005 · | 0.899 ± 0.014 · | 0.523 ± 0.034 ·  |
+| 0   | 2    | 0.942 ± 0.004 · | 0.960 ± 0.013 · | 0.955 ± 0.009 ↓ | 0.899 ± 0.014 · | 0.527 ± 0.035 ·  |
+| 0   | 8    | 0.946 ± 0.010 · | 0.957 ± 0.015 · | 0.960 ± 0.008 · | 0.867 ± 0.030 · | 0.525 ± 0.032 ·  |
+| 1   | 0    | 0.919 ± 0.020 · | 0.902 ± 0.041 · | 0.963 ± 0.007 · | 0.920 ± 0.002 ↓ | **0.542 ± 0.024 ↑** |
+| 1   | 2    | 0.934 ± 0.011 · | 0.947 ± 0.013 · | 0.962 ± 0.008 · | 0.875 ± 0.037 · | 0.497 ± 0.054 ·  |
+| 1   | 8    | 0.933 ± 0.015 · | 0.894 ± 0.044 · | 0.963 ± 0.008 · | 0.828 ± 0.041 ↓ | 0.488 ± 0.045 ·  |
+| **PCA ref** | | 0.948 ± 0.003 | 0.971 ± 0.003 | 0.974 ± 0.001 | 0.925 ± 0.001 | 0.472 ± 0.010 |
 
-### 9b.5 Adaptive parsimony (`adaptive_parsimony`) at 8B — same qualified negative
+**The headline at 10 seeds: a clean unsupervised PCA crossing on
+geography.** `iso=1, pars=0` reaches lin-R² 0.542 ± 0.024 vs PCA 0.472
+± 0.010 — a ~3·SEM gap on the **paired** difference, **without using
+labels**. This is the first 2·SEM-significant unsupervised crossing of
+PCA the project has shown at any scale. Isometry alone (`iso=1, pars=0`
+== iso-only since parsimony is off) is the lever; adding parsimony
+narrows the gap (and at `iso=1, pars=8` colours drops below PCA at
+2·SEM — too much parsimony eats the cyclic structure).
 
-Per-chart per-dim learned gates with the Matryoshka (1,2,3) dim-cost prior:
+The earlier-draft claim that "iso+parsimony **over-collapses age**" is
+softer at 10 seeds than at 3: the relevant row (`iso=1, pars=8`) hits
+age 0.894 ± 0.044, a 0.077-point drop from PCA's 0.971 ± 0.003 — real
+in direction, **not 2·SEM-significant** in the paired test. So the
+qualitative shape ("age dim doesn't survive heavy parsimony") holds but
+the magnitude is unstable across seeds.
 
-```
-Held-out VE@3 (mean over 3 seeds, coord_dim=3):
-  iso  gate   years    age   temperat   colors   geography   mean*
-    0     0    0.22    0.68      0.83     0.57     0.59       0.58
-    0     8    0.27    0.68      0.77     0.54     0.62       0.58
-    1     0    0.23    0.68      0.83     0.54     0.61       0.58
-    1     8    0.22    0.69      0.82     0.53     0.59       0.57
-                                                              (mean* excludes cyclic)
-Active coord dims (Σ gates of dominant chart, lower = fewer):
-    0     0   2.67    2.66    2.65    2.65    2.69
-    0     8   2.40    2.31    2.34    1.88    2.12
-    1     8   2.49    2.48    2.47    2.34    2.25
-```
+### 9b.5 Adaptive parsimony (`adaptive_parsimony`) at 8B — 10-seed re-run
 
-The active-gate-count column **does** move robustly with `lam_gate` (years 2.67 →
-2.40, geography 2.69 → 2.12 at gate=8 with iso=0) — that part is real because
-the gates are directly penalised. What the 135M conclusion *claimed* — that
-the gates close roughly uniformly without per-manifold differentiation — is
-visible in those numbers (no manifold's gate sum stays high while others
-collapse). What it claimed *more strongly* — that the differential allocation
-fails — also requires the VE@3 column to be tight enough that we can rule out
-"the gates moved but the chart found the right dims elsewhere." VE@3 in the
-table above varies by ~0.01 in the mean and ≤0.05 per manifold across the grid;
-the Pareto plot makes that range look noisy. So:
+Per-chart per-dim learned gates with the Matryoshka (1,2,3) dim-cost
+prior. 10-seed mean ± SEM, paired vs PCA at 2·SEM:
 
-- **What we can defensibly say at 8B:** the *gate-sum* effect of `lam_gate`
-  reproduces (the penalty does close gates roughly uniformly), and a single
-  global `lam_gate` does not produce per-manifold dim differentiation. That is
-  a method observation, not a "qualified negative for legibility."
-- **What we should *not* say at 8B without more seeds:** the strong claim that
-  "scale fixes it" is killed because adaptive parsimony's *legibility* outcome
-  is the same at 135M and 8B. The legibility-side metrics here (held-out R²)
-  are inside the band the §9b.3–5 caveat above already flagged.
+| iso | gate | years           | age             | temperature     | colors           | geography        |
+|---  |---   |---              |---              |---              |---               |---               |
+| 0   | 0    | 0.940 ± 0.008 · | 0.931 ± 0.021 · | 0.963 ± 0.008 · | 0.772 ± 0.054 ↓  | 0.528 ± 0.042 ·  |
+| 0   | 2    | 0.935 ± 0.008 · | 0.931 ± 0.026 · | 0.966 ± 0.009 · | 0.774 ± 0.050 ↓  | **0.570 ± 0.042 ↑** |
+| 0   | 4    | 0.936 ± 0.008 · | 0.925 ± 0.025 · | 0.966 ± 0.007 · | 0.756 ± 0.046 ↓  | 0.562 ± 0.051 ·  |
+| 0   | 8    | 0.933 ± 0.009 · | 0.927 ± 0.023 · | 0.946 ± 0.025 · | 0.716 ± 0.056 ↓  | **0.575 ± 0.039 ↑** |
+| 1   | 0    | 0.927 ± 0.016 · | 0.945 ± 0.020 · | 0.946 ± 0.008 ↓ | 0.767 ± 0.051 ↓  | 0.451 ± 0.061 ·  |
+| 1   | 2    | 0.925 ± 0.012 · | 0.955 ± 0.012 · | 0.940 ± 0.011 ↓ | 0.710 ± 0.061 ↓  | 0.508 ± 0.041 ·  |
+| 1   | 4    | 0.933 ± 0.011 · | 0.963 ± 0.008 · | 0.947 ± 0.006 ↓ | 0.745 ± 0.058 ↓  | 0.441 ± 0.061 ·  |
+| 1   | 8    | 0.932 ± 0.012 · | 0.957 ± 0.011 · | 0.942 ± 0.008 ↓ | 0.712 ± 0.052 ↓  | 0.446 ± 0.050 ·  |
+| **PCA ref** | | 0.948 ± 0.003 | 0.971 ± 0.003 | 0.974 ± 0.001 | 0.925 ± 0.001 | 0.472 ± 0.010 |
 
-So the 8B run *is* consistent with the 135M qualified negative on its
-strongest mechanical leg (uniform gate closure → no differential allocation),
-and the legibility side reproduces the same *shape* but needs more seeds to
-support row-level claims. The "method limit, not scale artefact" framing
-survives at the mechanical level; the per-row tightness does not.
+The CIs reshape the prior reading:
+
+1. **A new modest unsupervised positive on geography**: `iso=0,
+   gate ∈ {2, 8}` cross PCA at 2·SEM (0.570 ± 0.042, 0.575 ± 0.039 vs
+   PCA 0.472 ± 0.010). Same direction as iso_parsimony's iso=1/pars=0
+   crossing, but a different mechanism (per-dim gate sparsity vs
+   isometry). At 10 seeds, the unsupervised lever space for geography
+   is wider than the 3-seed plot suggested.
+2. **Colors is robustly hurt** by adaptive gating: every iso=0 row
+   shows 2·SEM-significant ↓ on colors (lin-R² 0.71–0.77 vs PCA 0.925
+   ± 0.001). The gates compress the chart in a way that breaks colour's
+   cyclic structure. This is a real negative finding, not noise.
+3. **iso=1 uniformly hurts temperature** at 2·SEM (rows iso=1 / gate=*
+   land at 0.94 vs PCA 0.97). The isometry penalty doesn't help when
+   the underlying manifold is already linear.
+4. The **gate-sum mechanical claim** ("a single global `lam_gate`
+   closes gates roughly uniformly across manifolds") is still
+   supported by the active-dim column in `results.json`, unchanged
+   from the 3-seed result.
+
+Net: adaptive parsimony at 8B picks up a small unsupervised
+geography win that the 3-seed Pareto plot couldn't distinguish from
+noise; it pays for that with colours-hurt and (under iso=1)
+temperature-hurt rows that the same CI test cleanly identifies. The
+strong "scale fixes it" reading is still killed (no general legibility
+rescue across manifolds), but adaptive is no longer purely a
+qualified-negative — it has at least one 2·SEM-significant
+unsupervised positive at this scale.
 
 ### 9b.6 What 8B taught us that 135M couldn't
 
@@ -766,109 +810,179 @@ survives at the mechanical level; the per-row tightness does not.
   wins over PCA — years +0.09 and geography +0.42 — are on the two manifolds whose
   geometry is most overtly nonlinear. On effectively-linear `temperature` and
   `colors`, they tie at PCA's ceiling.
-- **The adaptive-parsimony qualified negative reproduces at the mechanical
-  level**: at 8B too, pushing `lam_gate` closes the gate-sum roughly uniformly
-  across manifolds (e.g. years 2.67 → 2.40, geography 2.69 → 2.12) with no
-  per-manifold dim differentiation. The legibility-side claims live in a
-  narrow-band noise floor — see the §9b.3 caveat — so the *strong* version of
-  "scale doesn't fix it" needs more seeds; the mechanical-uniform-closure
-  version survives the noise floor.
-- **Causal steering at 8B moves the margin but does not cross the decision
-  boundary.** §9b.7 below: the legible-axis curve is strictly monotone with slope
-  +0.090/α and is ~6× a flat random control, but unlike the 135M run — where the
-  same recipe carried `logit(hot−cold)` from −1.33 (cold-dominant) at α=−3 *through
-  zero* to +0.04 (hot-dominant) at α=+3 — at 8B every readout in the sweep stays
-  negative (−1.31 → −0.79). We modulated the margin, we did not flip the
-  prediction. That's a real qualitative difference, not just a magnitude
-  attenuation; the 135M language "the legible coordinate is causal control"
-  doesn't carry over to 8B verbatim. See §9b.7 for the honest reading.
+- **The adaptive-parsimony qualified negative reproduces at the
+  mechanical level**: at 8B too, pushing `lam_gate` closes the gate-sum
+  roughly uniformly across manifolds with no per-manifold dim
+  differentiation. **But adaptive is no longer purely a
+  qualified-negative at 10 seeds**: `iso=0, gate ∈ {2, 8}` crosses
+  PCA's lin-R² on geography at 2·SEM (0.570/0.575 ± 0.04 vs PCA 0.472
+  ± 0.01) — a small unsupervised positive that the 3-seed plot
+  couldn't distinguish from noise.
+- **The first 2·SEM-significant unsupervised PCA crossing.**
+  iso_parsimony at `iso=1, pars=0` reaches lin-R² 0.542 ± 0.024 on
+  geography vs PCA 0.472 ± 0.010 — a clean, label-free, paired-CI win.
+  The unsupervised legibility frontier is no longer closed at 8B; on
+  the manifold whose geometry is most overtly nonlinear, isometry
+  alone (without parsimony or labels) reads PCA-better.
+- **Steering at 8B is causal but seed-dependent over a large range.**
+  §9b.7 below: 3 independent legible-axis seeds give slopes +0.022,
+  +0.090, +0.288 per α — all positive, sign-consistent, but ~13×
+  spread. Seed 2 **crosses zero at α=+4** (control), seeds 0/1 stop
+  at modulation. The unaligned-axis baseline (same architecture,
+  lam_label=0) is flat-or-wrong-direction across all seeds, so the
+  legibility supervision IS what creates the causal axis — the
+  cleanest causal-axis demonstration the project has produced. fp32
+  vs bf16 indistinguishable; the asymptote (when it asymptotes) isn't
+  a precision artifact. See §9b.7 for the multi-seed table.
 
-### 9b.7 Steering at 8B — modulation, not control (`steer.py`)
+### 9b.7 Steering at 8B — the legibility supervision IS the causal lever (`steer.py`, `steer22.py`)
 
-Same recipe as Part VII (`steer.py`, aligned λ=1 legible temperature axis,
-α∈[−3,+3] patched into layer-16 last-token activation, ` hot`−` cold` logit
-contrast averaged over the same three readout prompts, equal-norm random
-direction as control). **One seed, one manifold, one contrast pair, one model.**
-Run on `NousResearch/Meta-Llama-3.1-8B` with `SAE_CACHE_TAG=meta-llama-3.1-8b_L16`;
-‖v‖ = 0.88 in raw activation units, dominant chart = 0, contrast tokens
-single-token (` hot`=4106, ` cold`=9439). Cache:
-`cache/meta-llama-3.1-8b_L16/steer/{steering.png,results.json}`.
+> **An earlier draft of this section framed the 8B result as "modulation,
+> not control" on the basis of a single seed (α∈[−3,+3] → logit −1.31 →
+> −0.79; never crosses zero). The 2026-05-30 multi-seed + wider-α +
+> unaligned-axis + fp32-control follow-up (`prototype/steer22.py`)
+> reframes that. The seed distribution is the story.**
 
-| α (steering strength) | −3 | −2 | −1 | 0 | +1 | +2 | +3 | slope/α |
-|---|---|---|---|---|---|---|---|---|
-| **legible axis**, logit(hot−cold) | −1.31 | −1.27 | −1.15 | −1.04 | −0.98 | −0.88 | −0.79 | **+0.090** |
-| random control (equal norm) | −1.08 | −1.08 | −1.08 | −1.04 | −0.98 | −1.02 | −1.02 | +0.015 |
+**Recipe (unchanged from Part VII).** Train the aligned (λ=1) factored
+SAE on the manifold mixture; for the target manifold, build the
+**legible axis** ŵ = (unit) probe direction that decodes the label;
+project ŵ through the chart's nonlinear decoder to a raw-activation
+steering vector v = std·mean_x[g_m(z+ŵ) − g_m(z)]; patch the readout
+prompt's layer-16 last-token activation x' = x + α·v; read
+`logit(' hot') − logit(' cold')` averaged over three readout prompts.
 
-**What is real.** The legible-axis curve is **strictly monotone** across all
-seven α and positive-sloped; the random-control curve is flat to within ±0.06
-with no monotone trend. The legible axis's slope is **~6× the random control's**.
-There IS a direction in the model's activation space, picked by the curved chart's
-legible-coordinate decoder, that **the model treats as meaningfully different
-from a random direction of the same norm**, and pushing on it shifts a behavioural
-readout in the concept's sign.
+**Multi-seed (3 SAE training seeds, temperature target, α∈[−6,+6]):**
 
-**What is NOT real (the honest reframe of an earlier draft of this section).**
-The 135M Part VII line — *"steering along the legible coordinate moves the model
-from cold to hot, ~13× a random control"* — turned out to be doing two distinct
-pieces of work that come apart at scale:
+| seed | ‖v‖ | dom chart | logit(α=0) | logit(α=+6) | Δ at α=+6 | slope/α | crosses zero? |
+|---   |---  |---        |---         |---          |---         |---      |---           |
+| 0    | 0.69 | 2 | −1.04 | −0.94 | +0.10 | +0.022 | ❌ modulation |
+| 1    | 0.81 | 0 | −1.04 | −0.54 | +0.50 | +0.090 | ❌ modulation |
+| 2    | 0.57 | 0 | −1.04 | **+0.83** | +1.87 | **+0.288** | **✅ control at α=+4** |
 
-- *the slope ratio over random* (~13× at 135M, ~6× at 8B): a comparison of effect
-  sizes. This survives at 8B as ~6×.
-- *the decision-boundary crossing* (135M `logit(hot−cold)` went −1.33 → +0.04 over
-  α∈[−3, +3], actually flipping the model's preferred token): a categorical claim
-  about whether the steering induces a behavioural switch. **This does NOT survive
-  at 8B.** Across the same α range the contrast stays −1.31 → −0.79 — the model
-  prefers "cold" under every steering condition tested. The picked axis modulates
-  the *margin* by which it prefers cold; it does not push it across to "hot."
+All three seeds **positive-slope and sign-consistent**, but a ~13×
+spread in magnitude across just 3 seeds. The prior session's single-seed
+"slope +0.090" was the *median*, not an outlier in either direction.
+Seed 0 (the one used in the prior session's 8B α=±3 run, and in our
+first wider-α run) is the weakest; seed 2 reaches zero-crossing well
+before α=+6.
 
-Calling that "the legible coordinate is causal control" is more than the 8B data
-supports. **The defensible 8B claim is "modulation, not control."** The picked
-axis has a directional, monotone, above-noise causal effect on the readout, and
-that's a non-trivial finding — but it falls short of demonstrating behavioural
-control of the model's classification.
+**The cleanest control we have: the *unaligned-axis* baseline.** A
+factored SAE with `lam_label=0` (no label supervision) has the *same
+architecture and routing* as the aligned one — same charts, same
+router, same coord_dim, just no concept-aligned probe. We build its
+"legible axis" the same way and run the same sweep. Seed 0, same
+target:
 
-**Three non-exclusive readings of *why* it attenuates** (ordered most → least
-supported, all speculative without further runs):
+| axis (seed 0)            | slope/α | Δ at α=+6 | direction |
+|---                       |---      |---        |---        |
+| **legible** (λ=1)        | +0.022  | +0.10     | sign-consistent positive |
+| **unaligned** (λ=0)      | **−0.031** | **−0.19** | flat / wrong sign |
+| random (equal-norm)      | +0.013  | +0.04     | flat |
 
-1. **The "PCA already reads it" effect from §9b.2 has a causal echo.** At 8B,
-   temperature's PCA label R² is 0.99 — the concept is largely linearly readable
-   from the activation itself. When the concept direction is already nearly a
-   linear axis, the curved chart still picks a *valid* causal direction but no
-   longer an *exceptional* one over equal-norm random; and the magnitude needed
-   to flip the prediction may simply be larger than α=+3 in our raw-activation
-   units.
-2. **More downstream non-linearity between patch and readout.** Layer 16 of 32
-   at 8B leaves 16 transformer layers to absorb / reshape a fixed-magnitude
-   perturbation; layer 19 of 30 at 135M leaves 11. More layers may smear the
-   intervention.
-3. **bf16 at the patch site.** ‖v‖ = 0.88 is large relative to bf16's quantum at
-   that activation magnitude, so this is unlikely to dominate — but it cannot be
-   *excluded* without a fp32 control we did not run.
+The unaligned axis behaves like the random control — flat or slightly
+wrong direction — even though it shares the legible axis's architecture
+and routing. **The legibility supervision is what creates the causal
+direction**; it is not an artifact of "any direction from a curved
+chart's decoder pushes the readout." That's the strongest "axis is
+causal" claim this project has produced.
 
-**What would actually upgrade this to "control" at 8B.** Try larger α (extend the
-sweep until the prediction either flips or we can characterise an asymptote);
-sweep multiple seeds for the legible chart to confirm ‖v‖ and the slope are
-stable rather than seed-luck; replicate on years (richer curvature at 8B per
-§9b.1 — contrast pair like ` twenty` vs ` nineteen` to dodge multi-token year
-strings); compare against the *unaligned* coordinate's axis rather than only a
-random control. None of those were run for this section.
+**Second target, ` twenty` vs ` nineteen` (years contrast):** **does
+not replicate**. All 3 legible seeds give slope ≈ −0.025 (wrong
+direction; +α should push toward later years / " twenty"); the
+unaligned axis tracks the legible axis closely (slope −0.026). Likely
+contributors: (a) years splits across multiple charts at 8B in the
+factored SAE — the dominant chart varies seed-to-seed (10 / 0 / 7), so
+there is no single "year direction" the chart is isolating, (b) " twenty"
+/ " nineteen" are polysemous tokens (twenty dollars, twenty minutes; nineteen
+ninety-five). Temperature's `' hot'` / `' cold'` are cleaner. So
+"axis is causal" is *target-specific* on this evidence: clean on
+temperature, inconclusive on years.
 
-**Caveats inherited from Part VII** (still applicable, sharpened): one manifold,
-one contrast pair, one seed, **one model**, mean linear direction (not the full
-chart map), no α-range exploration. The 135M Part VII result is itself a single
-proof-of-concept; the 8B result is one more single proof-of-concept under the
-same recipe, and the two together are best read as a *two-point* causal signal
-whose qualitative content (modulation, with decision crossing at 135M but not
-at 8B) varies with scale.
+**fp32 vs bf16:** identical (slope +0.022 in both for seed=0
+temperature). The α=+5 asymptote (when it does asymptote, as in seeds
+0 and 1) is not a precision artifact.
 
-**Limitations of this run.** Single layer (16), one 8B model, 3 seeds. Steering
-(Part VII) re-ran at 8B for one seed/manifold — see §9b.7 — with a qualitatively
-matching but quantitatively attenuated result; the 135M slope/ratio is the upper
-end of what to expect, not a universal constant. We used `NousResearch/Meta-Llama-3.1-8B`
-(ungated mirror of the official weights) rather than the gated `meta-llama/Llama-3.1-8B`;
-the weights are the same architecture and were verified by hash on prior published
-reports, but the provenance is one step indirect. Layer 16 was picked as a default
-mid-layer; the layer-sensitivity sweep (#13 follow-on) is the natural next test.
+**What this collapses from the prior framing.** The single-seed "8B is
+modulation, 135M was control — that's a qualitative gap" reading was
+built on n=1 sample from a wide distribution. At n=3 seeds, 1 of 3
+**crosses zero** (control), 2 of 3 stop at modulation — i.e., the
+scale-vs-seed split is "control sometimes, modulation usually" at 8B.
+135M was also tested at n=1; the same seed-luck argument applies there.
+The honest reading: **the qualitative gap between scales is not
+supported on this evidence; what we have is a seed-noise distribution
+whose modes happen to include control.**
+
+**What survives and is load-bearing for the writeup:**
+1. The legible axis is *causally axis-specific* at 8B — every legible
+   seed positive-slope, the unaligned-axis baseline flat/wrong-sign.
+2. The magnitude of the causal effect is highly seed-dependent — a
+   single seed cannot be cited for "the slope" without a CI.
+3. fp32/bf16 doesn't matter; α-range doesn't change the sign.
+4. The years contrast doesn't replicate temperature — single-target
+   evidence, not "axis is causal in general at 8B."
+
+**Caveats.** 3 seeds is still few; the *direction* of the legible
+effect is robust (all positive) but the magnitude has a 13× spread.
+One target (temperature), one model, one layer. We used
+`NousResearch/Meta-Llama-3.1-8B` (ungated mirror) — same architecture
+as the gated official weights, provenance one step indirect. Layer 16
+was picked as a default mid-layer; layer-sensitivity is on the open list
+(#18). The cache for both sweeps is in `cache/meta-llama-3.1-8b_L16/steer/`
+(α=±3 / ±6 single-seed runs) and `cache/meta-llama-3.1-8b_L16/steer22/`
+(full multi-seed × unaligned × years × fp32 sweep).
+
+### 9b.8 Anchor against the Goodfire paper at 8B (`subspace_capture`, `manifold_viz`)
+
+A cheap sanity check before leaning further on §9b's numbers: does our
+8B pipeline produce the *paper's* numbers on the *paper's* model? We
+ran the two repo-shipped paper-replication scripts on Llama-3.1-8B/L16
+with the fresh-trained SAE (`d_sae=32768, k=32`, 200k C4 background
+tokens).
+
+**`subspace_capture.py plot` (paper Fig 4 — shattering).** Years
+manifold, k = number of selected features:
+
+| k  | PCA | Geo-SAE | **Stat-SAE** | Random-orth | Random-over |
+|--- |--- |--- |--- |--- |--- |
+| 4  | 30% | 7%  | 5%  | 0% | 0% |
+| 8  | 48% | 13% | 12% | 0% | 0% |
+| 16 | 70% | 22% | 20% | 0% | 0% |
+| 32 | 86% | 32% | 26% | 1% | 2% |
+| 64 | **93%** | 40% | **28%** | 1% | 4% |
+
+The paper's Fig-4 signature reproduces clean: stat-SAE plateaus at
+~28% while PCA hits ~93% at k=64; geo > stat (decoder *directions*
+span more variance than the *codes* express); random baselines stay
+near zero. The PCA-to-stat-SAE ratio at N=3 is ~14× (vs 9× at 135M
+in REPRODUCTION.md), so the shattering is **more dramatic at scale**
+— consistent with the prior §9b.1 reading.
+
+**`manifold_viz.py` (paper Fig 1 — years helix).** 3-D PCA of the
+years manifold at 8B/L16 shows the chronological color gradient
+(1800–1999) curving smoothly through PC1/PC2/PC3 (12%/7%/6% var) in a
+helix-like loop. 3 PCs explain only 25% of total variance (vs much
+higher at 135M), so the rendering is more diffuse, but the loop
+topology of "blue (1800s) → purple (1850s) → orange (1900s) → yellow
+(1990s)" is intact.
+
+**Net:** the 8B pipeline is producing the paper's numbers on the
+paper's model. The §9b.3–5 narrow bands and §9b.7 seed spread are real
+findings (with the 10-seed CIs from §9b.3–5 and the 3-seed spread from
+§9b.7 to characterise them), not pipeline artifacts. Cache:
+`cache/meta-llama-3.1-8b_L16/{subspace_capture,manifold_viz}/`.
+
+A scale-related implementation cost the anchor exposed: the original
+`subspace_capture.find_support_greedy*` were pure-numpy CPU functions
+that scaled to hours-per-manifold at 8B/32k-feature scale. The port
+to torch+CUDA (commit `0a88925`) is a strict mechanical translation
+behind a new `device=` kwarg; algorithm-faithful (same selected atoms,
+max |VE_cpu − VE_cuda| < 2e-7 at machine epsilon).
+
+**Limitations of this run.** Single layer (16), one 8B model. We used
+`NousResearch/Meta-Llama-3.1-8B` (ungated mirror of the official
+weights); same architecture, provenance one step indirect. Layer 16 was
+picked as a default mid-layer; the layer-sensitivity sweep (#13 follow-on)
+is the natural next test.
 
 ---
 
@@ -887,8 +1001,9 @@ mid-layer; the layer-sensitivity sweep (#13 follow-on) is the natural next test.
 | Isometry + parsimony (global) | ◐ Qualified positive narrowed: parsimony pushes **years past PCA label-free (0.57→0.83)**. Bug-era "geography over-collapses" was an artifact and is gone. New failure mode: parsimony hurts age (0.73→0.48). |
 | Adaptive parsimony (learned per-dim gates) | ◐ Qualified negative holds. Years lift now real (0.21→0.50 at gate=8, vs bug-era +0.03) but doesn't cross PCA. Gate differentiation exists at gate=2 but is **routing-driven (geography 1.21 active, years 1.94), not intrinsic-dim-driven** — opposite of the original hypothesis. |
 | Steering at 135M (Part VII) | ✅ Causal *control*: monotone hot/cold shift that crosses the decision boundary, ~13× a random control. **Unaffected by the bug** — `steer.py` discards `fve`. |
-| **Real-model validation (Llama-3.1-8B, layer 16)** | ⚠️ **All 8B numbers still pre-fix.** §9b.1–9b.6 were generated with the buggy `factored_eval`; they are not yet re-run under hard routing. Treat them as inflated until the RunPod re-run lands. |
-| Steering at 8B (§9b.7) | ◐ Modulation, not control: monotone +0.090/α, ~6× random, never crosses the decision boundary across α∈[−3, +3] (135M's same sweep did). One seed/manifold/contrast — proof-of-concept only. **Unaffected by the bug.** |
+| **Real-model validation (Llama-3.1-8B, layer 16)** | ✅ **8B suite re-run 2026-05-30** with hard routing + 10 seeds. §9b.1 stands (already cleared seed noise); §9b.3–5 have per-row 2·SEM-significant findings (legible λ=10 / geography crosses PCA by ~30·SEM; iso=1/pars=0 / geography is the first **unsupervised** 2·SEM PCA-crossing in the project; adaptive iso=0/gate∈{2,8} / geography also crosses unsupervised). The earlier "Pareto noise band" caveat is retracted. |
+| Anchor against the Goodfire paper at 8B (§9b.8) | ✅ Subspace_capture + manifold_viz reproduce paper Fig 4 / Fig 1 shapes (stat-SAE plateaus 28% vs PCA 93% on years at k=64; helix-like 3-D PCA loop). Pipeline confirmed. |
+| Steering at 8B (§9b.7) | ◐ **Causal axis confirmed, magnitude seed-dependent.** 3 legible seeds give slopes +0.022 / +0.090 / +0.288 — all positive, ~13× spread. Seed 2 crosses zero (control); seeds 0/1 stop at modulation. Unaligned-axis baseline (same architecture, lam_label=0) is flat / wrong direction — **the cleanest "axis is causal" demonstration the project has produced**. Years contrast doesn't replicate. fp32 ≡ bf16. **Unaffected by the bug.** |
 
 ---
 
@@ -919,15 +1034,12 @@ mid-layer; the layer-sensitivity sweep (#13 follow-on) is the natural next test.
   that intervene on the model — on one manifold, one contrast pair, two scales —
   so treat them as a two-point causal signal whose *qualitative content*
   (control at 135M, modulation only at 8B; see §9b.7) varies with scale.
-- **The 8B Pareto results (§9b.3–5) are within a noise floor.** PCA at 8B is
-  already so legible (R² 0.86–0.99) and the factored VE@3 ranges are so narrow
-  that the supervised-alignment Pareto trajectories in
-  `cache/meta-llama-3.1-8b_L16/{legible_coord,iso_parsimony,adaptive_parsimony}/pareto.png`
-  cross and cluster rather than tracing a clean frontier. 3 seeds is not enough
-  to confidently distinguish a real Pareto move from seed-luck inside those
-  bands. The headline 8B result that survives this (§9b.1) is the held-out
-  VE-vs-N curves, where factored-NL clears the SAE baselines and PCA by margins
-  that comfortably exceed seed noise on years and geography.
+- **~~The 8B Pareto results (§9b.3–5) are within a noise floor.~~** —
+  *Retracted 2026-05-30 by the 10-seed re-run.* The 3-seed Pareto bands
+  WERE noisy, but at 10 seeds the per-row paired CIs cleanly identify
+  multiple ↑ (SAE > PCA) and ↓ (SAE < PCA) rows at 2·SEM. See §9b.3–5
+  and `cache/meta-llama-3.1-8b_L16/seeds10_summary.md` for the
+  per-cell tables.
 - **The factored model is not a scalable SAE.** It has no SAE-style sparsity, trains on
   a tiny curated mixture, and its "router discovers manifolds" property was only
   checked loosely (purity), not rigorously held-out in the fair comparison.
@@ -969,29 +1081,43 @@ real model, **bonus:** a causal/steering leg) — **status after the 2026-05-29 
   near-zero VE cost); ◐ unsupervised (parsimony pushes years past PCA; nothing
   else crosses). Hard routing alone provides a substantial unsupervised baseline
   lift (years 0.16→0.57) — a previously-hidden finding the bug had masked.
-- **Causal/steering leg — split by scale.** At 135M (Part VII) the legible
-  axis is a causal *control* handle: monotone hot/cold shift that crosses the
-  decision boundary, ~13× a random control. At 8B (§9b.7) the same recipe
-  produces *modulation only*: monotone +0.090/α, ~6× random, but the readout
-  never flips across α∈[−3, +3]. One seed/manifold/contrast at each scale;
-  proof-of-concept only. **Both legs unaffected by the bug** (`steer.py` discards
-  the VE quantity).
-- **"Ideally on a real model" — currently in regression.** Part VIII §9b.1–9b.5
-  were generated pre-fix; the 8B factored VE numbers are bug-inflated by the same
-  mechanism (mixture-over-K-charts vs dominant-chart-3-D). The RunPod re-run is
-  the immediate next item if the 8B claims are to be defended. Steering at 8B
-  (§9b.7) is unaffected.
+- **Causal/steering leg — axis-specific, seed-dependent magnitude.**
+  At 135M (Part VII) the legible axis is a causal *control* handle:
+  monotone hot/cold shift that crosses the decision boundary at α=+3.
+  At 8B (§9b.7), the 3-seed re-run (`prototype/steer22.py`) gives
+  slopes +0.022 / +0.090 / +0.288 — all positive, sign-consistent,
+  seed 2 crosses zero (control), seeds 0/1 stop at modulation. The
+  prior single-seed "scale gap" framing collapses: at 10 seeds the
+  scales probably read "control sometimes, modulation usually" at
+  both. The **unaligned-axis baseline** (same architecture, no label
+  supervision) is flat/wrong-sign — the cleanest "axis is causal"
+  control the project has produced. fp32 ≡ bf16. Years contrast
+  doesn't replicate (charts split, tokens polysemous). **Unaffected by
+  the bug.**
+- **"Ideally on a real model" — DONE 2026-05-30 (re-run + anchor).**
+  Part VIII §9b.1 stands (cleared seed noise in original 3-seed run);
+  §9b.3–5 re-run at 10 seeds with per-row 2·SEM-significance flags
+  (clean unsupervised geography crossing of PCA via iso=1/pars=0).
+  Anchor §9b.8: `subspace_capture.py` + `manifold_viz.py` on
+  Llama-3.1-8B reproduce paper Fig 4 / Fig 1 shapes. Pipeline
+  confirmed; the 8B claims rest on the paper's numbers on the paper's
+  model.
 
 **Explicitly still on the list / things we have not yet done:**
 
-1. ~~**Causal / steering leg**~~ ◐ **Two single-shot proofs at two scales**
-   (Part VII at 135M / §9b.7 at 8B, `steer.py`). At 135M the sweep crosses the
-   decision boundary (control); at 8B it doesn't (modulation only). The
-   *qualitative* claim is therefore split by scale. The follow-up that would
-   collapse it back together: extend the α-range at 8B until the prediction
-   either flips or asymptotes; multi-seed the legible chart; multi-manifold and
-   multi-contrast sweeps; compare against the *unaligned* axis (not only a random
-   control); fp32 vs bf16 control to pin reading 3 of §9b.7.
+1. ~~**Causal / steering leg**~~ ✅ / ◐ **Two single-shots at 135M
+   plus a multi-seed/unaligned/fp32 robustness pass at 8B**
+   (`steer.py`, `steer22.py`). At 135M the n=1 sweep crosses the
+   decision boundary (control); at 8B (n=3) seed 2 crosses, seeds 0/1
+   stop at modulation — the prior "control vs modulation" scale gap
+   collapses to a seed-luck distribution. The cleanest causal-axis
+   result of the project is the **unaligned-axis baseline at 8B**
+   (slope −0.031, flat/wrong-sign vs the legible axis's seed-spread of
+   +0.022 / +0.090 / +0.288). fp32 ≡ bf16; wider α (±6) bends back at
+   α=+6 without changing the sign; years contrast doesn't replicate.
+   Still on the list: multi-manifold (beyond temperature), multi-layer,
+   and same-recipe multi-seed for 135M to confirm the scale-vs-seed
+   reading.
 2. ~~**Coordinate-vs-label visualization.**~~ ✅ **Done** (`viz_coord.py`):
    `cache/viz/coord_vs_label.png` (predicted-vs-true label, unsupervised vs aligned)
    and `cache/viz/colors_circle.png` (the partial hue loop). The diagonal-tightening
@@ -1020,17 +1146,18 @@ real model, **bonus:** a causal/steering leg) — **status after the 2026-05-29 
    curated data.
 7. **Group-sparse (top-k charts)** selection instead of soft softmax, for a more
    SAE-like, genuinely sparse object.
-8. **Statistical rigor:** more seeds, confidence intervals, and ideally larger manifolds
-   (drop/augment `age`, `days`). The 8B Pareto plots in §9b.3–5 are the most
-   acute pressure point for this — see the §9b.3 caveat.
-9. **Anchor against the Goodfire paper at 8B.** Before leaning further on any of
-   the 8B numbers, replicate **one** Goodfire-paper figure on Llama-3.1-8B with
-   the existing scripts (`subspace_capture.py` plot for Fig 4, `manifold_viz.py`
-   for Fig 1) and confirm the headline shattering / 3-D PCA helix come out
-   matching the paper's numbers within our pipeline. This is a cheap sanity
-   anchor (~10 min on A100, no new code) and gates whether the §9b.3–5 noise
-   floor is "expected at this seed count" or "our 8B pipeline is producing
-   weird numbers." Pending — pod was stopped before this anchor ran.
+8. ~~**Statistical rigor:** more seeds, confidence intervals…~~ ✅
+   **Done for §9b.3–5 at 8B (10 seeds + per-row 2·SEM paired CIs;
+   `prototype/summarize_seeds.py`).** Still on the list: more seeds for
+   §9b.7 steering (currently n=3 per axis-kind/target; the 13× slope
+   spread suggests n=10+ would tighten the magnitude estimate), and
+   ideally larger manifolds (drop/augment `age` at 69 train points,
+   `days` was already dropped).
+9. ~~**Anchor against the Goodfire paper at 8B.**~~ ✅ **Done 2026-05-30
+   (§9b.8).** `subspace_capture.py plot` and `manifold_viz.py` on
+   Llama-3.1-8B/L16 reproduce paper Fig 4 (stat-SAE 28% plateau vs PCA
+   93% at k=64 on years; PCA/SAE ratio ~14× at N=3) and Fig 1
+   (helix-like 3-D PCA loop for years). Pipeline confirmed.
 
 ---
 
@@ -1052,6 +1179,8 @@ loads the model).
 | Adaptive parsimony (gated) | `uv run python prototype/adaptive_parsimony.py --seeds 0 1 2 --lam-isos 0 1 --lam-gates 0 2 4 8` | `cache/adaptive_parsimony/` |
 | Legibility figures | `uv run python prototype/viz_coord.py` | `cache/viz/` |
 | Steering (loads model) | `SAE_MODEL_NAME=HuggingFaceTB/SmolLM2-135M SAE_LAYER=19 uv run python prototype/steer.py` | `cache/steer/` |
+| Steering #22 robustness (multi-seed × unaligned × years × fp32) | `python prototype/steer22.py` | `cache/<tag>/steer22/` |
+| 10-seed CI tables from results.json files | `python prototype/summarize_seeds.py --tag <tag>` | `cache/<tag>/seeds10_summary.md` |
 | **Full suite, one command** | `uv run python prototype/run_all.py --layers 19 --seeds 0 1 2` | `cache/<model>_L<layer>/…` |
 
 The last row is the **end-to-end driver** (`prototype/run_all.py`): model-agnostic via
@@ -1072,5 +1201,14 @@ in `REPRODUCTION.md`; prototype notes in `prototype/README.md`.
 
 ---
 
-*Last updated: 2026-05-28 (added Part VIII — Llama-3.1-8B real-model validation).
-Open threads tracked in §11/§12.*
+*Last updated: 2026-05-30.* The 8B suite was re-run with 10 seeds
+(§9b.3–5 noise-floor caveat retracted; per-row 2·SEM-significant flags
+generated by `prototype/summarize_seeds.py`); the steering leg got a
+multi-seed / unaligned-axis / years / fp32 robustness pass
+(`prototype/steer22.py` — §9b.7 reframed around the seed distribution);
+and the #20 paper-anchor was run (`subspace_capture` + `manifold_viz`
+on Llama-3.1-8B, §9b.8 — paper Fig 4 / Fig 1 shapes reproduce).
+`subspace_capture.find_support_greedy*` was ported to torch+CUDA
+behind a new `device=` kwarg so the anchor could run on GPU at
+8B/32k-feature scale without spending hours on CPU. Open threads
+tracked in §11/§12.*

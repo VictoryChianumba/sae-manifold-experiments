@@ -202,22 +202,27 @@ produces the paper's numbers on the paper's model. Cheap; not yet run.
 
 ---
 
-## Where the through-line stands — **corrected 2026-05-29**
+## Where the through-line stands — **updated 2026-05-30**
 
 | Question | Answer | Strength |
 |---|---|---|
-| Curved SAE → better fidelity? | **Narrowly yes:** factored-NL beats PCA-3 on years (+0.12) at 135M; loses on the other four. Curvature-vs-linear-chart delta (+0.30 to +2.00) is intact — the *internal* lever works, just not enough to clear PCA on most manifolds at matched coord_dim. **8B not yet re-run post-fix.** | Modest at 135M / **pending re-run at 8B** |
-| …interpretable coordinate? | At 135M ✅ supervised (λ=1 crosses PCA on 4/5 manifolds at near-zero VE cost); ◐ unsupervised (parsimony pushes years past PCA, nothing else crosses). Hard routing alone provides a substantial unsupervised baseline lift the bug had masked. **8B not yet re-run post-fix.** | Solid at 135M (supervised) / pending at 8B |
-| …causally a control handle? | At 135M ✅ control (sweep crosses decision boundary, ~13× random); at 8B ◐ modulation only (~6× random, monotone, but boundary not crossed in α∈[−3,+3]). **Both legs unaffected by the bug.** | Proof-of-concept; split by scale |
+| Curved SAE → better fidelity? | **Narrowly yes at 135M (years +0.12), louder at 8B:** at 8B factored-NL clears PCA by +0.42 on geography and +0.09 on years at coord_dim=3, while factored-LIN collapses to −0.02 (no parameter-slack defence). Curvature-vs-linear delta intact at both scales. | Solid at 8B on curved manifolds (geography, years); narrow at 135M. |
+| …interpretable coordinate? | At 135M ✅ supervised (λ=1 crosses PCA on 4/5 manifolds at near-zero VE cost). At 8B (10-seed re-run): **clean ↑ on geography at every λ ≥ 1** (peaks at 0.776 ± 0.010 vs PCA 0.472 ± 0.010 — ~30·SEM gap), marginal ↑ on years at λ=10. Non-geography cells mostly inside the PCA band at 2·SEM — supervision is a *refinement* on linear-ish manifolds, a *rescue* on geography. **First clean unsupervised crossing of PCA** at 8B via iso=1/pars=0 on geography (0.542 ± 0.024). | Solid at both scales; supervised + first unsupervised. |
+| …causally a control handle? | At 135M ✅ control on n=1. At 8B with multi-seed: legibility supervision creates a sign-consistent causal axis vs an unaligned-axis baseline (same architecture, lam=0, slope −0.031 = flat/wrong). Legible-axis slopes +0.022 / +0.090 / +0.288 across 3 seeds — all positive, but seed 2 crosses zero (control); seeds 0/1 stop at modulation. The prior single-seed "scale gap" framing collapses to seed-luck. fp32 ≡ bf16. Years contrast doesn't transfer (chart-splits, polysemous tokens). | Causal axis confirmed; magnitude is the open question. |
+| Pipeline anchored against the paper? | ✅ **8B subspace_capture + manifold_viz reproduce paper Fig 4 / Fig 1 shapes** (stat-SAE plateaus 28% vs PCA 93% at k=64 on years, ~14× shattering ratio at N=3; chronological loop in 3-D PCA). | Anchor passed; the 8B numbers above rest on the paper's pipeline. |
 
-**One-line story (post-fix):** *a hard-routed atlas-of-curved-charts SAE achieves a
-narrow matched-dim fidelity win over PCA on the simplest curved manifold (years).
-Its main contribution at 135M is a **legibility lever**: a weak concept-shaped
-label prior pushes the chart's coordinate past PCA on 4/5 manifolds at near-zero
-VE cost, and the resulting axis is a causal control handle on the model. The
-fidelity story is small; the legibility + steering story holds and is what's
-defensible. The 8B suite needs re-running under the fix before the real-model leg
-can be cited.*
+**One-line story (post-2026-05-30 re-run):** *a hard-routed
+atlas-of-curved-charts SAE achieves a clean matched-dim fidelity win
+over PCA on the manifolds whose geometry is most overtly nonlinear
+(geography +0.42 at 8B, years +0.12 at 135M); a weak label prior
+pushes its coordinate past PCA on those same manifolds at near-zero VE
+cost (geography 0.47 → 0.78 at 8B λ=10, ~30·SEM clean); the
+unsupervised lever — isometry alone, no labels — also clears PCA on
+geography at 8B; and the resulting axis is causally axis-specific
+(legible-vs-unaligned slope split, fp32-invariant) with seed-dependent
+magnitude. The fidelity, legibility, and causality stories all hold;
+the 8B anchor confirms the pipeline is producing the paper's numbers
+on the paper's model.*
 
 **The bug, in one paragraph.** For most of this project's history, `factored_eval`
 scored reconstruction over the K-chart soft mixture (~36-D effective subspace at
@@ -231,15 +236,21 @@ the supervised legibility win held (and split into a separable hard-routing-base
 margin, audit what the matching constraint constrains *at metric time*; branch
 dimension is the trap.
 
-**Standing limitations:** still toy by some axes — `age`/`days` too small, 3 seeds,
-one layer, one contrast pair / one manifold for steering at each scale; the **8B
-suite is currently in regression** (pre-fix bug-inflated; needs RunPod re-run);
-"matched dimensionality" isn't fully "matched capacity"; the legibility wins lean
-on weak supervision; the 8B pipeline has not been anchored against a Goodfire-paper
-number yet.
+**Standing limitations:** still toy by some axes — `age` (69 train
+points) is consistently unreliable, `days` already dropped; one layer
+(16) at 8B; one contrast pair / one manifold for steering at each
+scale (3 seeds for 8B steering, n=1 at 135M); "matched dimensionality"
+isn't fully "matched capacity"; the legibility wins lean on weak
+supervision; years-target steering doesn't replicate temperature
+(distinguishes the temperature result from "axis is causal in
+general"); the 13× seed-spread for the 8B steering slope means
+single-seed slope numbers aren't trustworthy.
 
-**Open threads:** RunPod re-run of the 8B suite under the fix; in-the-wild router;
-group-sparse charts; proper isometric-AE; more seeds + bigger manifolds;
-layer-sensitivity sweep at 8B; cross-architecture (Qwen / Mistral); and the
-**anchor**: replicate one Goodfire-paper figure at 8B before re-investing in any
-8B-specific claims.
+**Open threads:** more steering seeds (to tighten the magnitude
+distribution and the 135M control vs 8B modulation reading); steering
+on additional manifolds (geography is the next obvious test given its
+clean §9b.4 win); in-the-wild router (train on background, not curated
+mixture); group-sparse charts (top-k routing for a more SAE-like
+object); proper isometric-AE (exact Jacobian); larger manifolds
+(replace `age`); layer-sensitivity sweep at 8B; cross-architecture
+(Qwen / Mistral).

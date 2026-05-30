@@ -64,46 +64,52 @@ def _detect_elbow(curve, min_k=1):
 
 # ── Geometric reconstruction (decoder directions) ────────────────────────────
 
-def find_support_greedy(activations, decoder, max_k=100, var_threshold=0.95):
+def find_support_greedy(activations, decoder, max_k=100, var_threshold=0.95,
+                        device=None):
     """Greedy subspace pursuit over decoder directions.
 
     At each step adds the decoder atom whose direction captures the most
     remaining variance of the centered manifold activations. Returns the
     selected feature indices, the cumulative variance-explained curve, and
     the suggested elbow ``k``.
+
+    The hot loop (projections, scores, SVD) runs on ``device`` (default
+    "cpu" for back-compat); pass ``device=DEVICE`` to put it on cuda at the
+    8B/32k-feature scale. Algorithm is unchanged; inputs/outputs match the
+    original numpy signature.
     """
-    X = np.asarray(activations, dtype=np.float32)
+    dev = torch.device(device) if device is not None else torch.device("cpu")
+    X = torch.as_tensor(activations, dtype=torch.float32, device=dev)
     X = X - X.mean(0)
-    total_ss = (X ** 2).sum()
+    total_ss = (X ** 2).sum().item()
     if total_ss < 1e-10:
         return np.array([], dtype=int), np.array([]), 0
 
-    candidates = np.arange(decoder.shape[0])
-    D_cand = decoder[candidates]
+    # candidates = np.arange(n_atoms) in the original, so local==global.
+    D_cand = torch.as_tensor(decoder, dtype=torch.float32, device=dev)
     d_norms_sq = (D_cand ** 2).sum(1)
     alive = d_norms_sq > 1e-10
 
-    selected_local = []
-    selected_global = []
+    selected = []
     var_curve = []
-    residual = X.copy()
+    residual = X.clone()
+    neg_inf = float("-inf")
 
     for _ in range(max_k):
         projections = residual @ D_cand.T
-        scores = (projections ** 2).sum(0) / d_norms_sq.clip(1e-10)
-        scores[~alive] = -np.inf
-        for i in selected_local:
-            scores[i] = -np.inf
-        best = int(np.argmax(scores))
-        if scores[best] <= 0:
+        scores = (projections ** 2).sum(0) / d_norms_sq.clamp_min(1e-10)
+        scores = torch.where(alive, scores, torch.full_like(scores, neg_inf))
+        for i in selected:
+            scores[i] = neg_inf
+        best = int(torch.argmax(scores).item())
+        if scores[best].item() <= 0:
             break
-        selected_local.append(best)
-        selected_global.append(int(candidates[best]))
-        D_sel = decoder[selected_global]
-        _, s, Vt = np.linalg.svd(D_sel, full_matrices=False)
+        selected.append(best)
+        D_sel = D_cand[selected]
+        _, s, Vt = torch.linalg.svd(D_sel, full_matrices=False)
         basis = Vt[s > 1e-8]
         residual = X - (X @ basis.T) @ basis
-        explained = 1.0 - (residual ** 2).sum() / total_ss
+        explained = 1.0 - (residual ** 2).sum().item() / total_ss
         var_curve.append(float(explained))
         if explained >= var_threshold:
             break
@@ -111,57 +117,65 @@ def find_support_greedy(activations, decoder, max_k=100, var_threshold=0.95):
     var_curve = np.array(var_curve)
     elbow_k = (_detect_elbow(var_curve, min_k=1) + 1
                if len(var_curve) > 2 else len(var_curve))
-    return np.array(selected_global), var_curve, elbow_k
+    return np.array(selected), var_curve, elbow_k
 
 
 # ── Statistical reconstruction (actual SAE codes) ────────────────────────────
 
 def find_support_greedy_codes(activations, sae, codes,
-                              max_k=100, var_threshold=0.95):
+                              max_k=100, var_threshold=0.95, device=None):
     """Greedy selection by manifold variance explained from actual SAE codes.
 
     For each feature ``i``, its centered contribution to the reconstruction is
     ``(z_i - <z_i>) d_i``. At each step adds the feature whose contribution
     most reduces the residual.
+
+    The hot loop runs on ``device`` (default "cpu" for back-compat); pass
+    ``device=DEVICE`` for cuda at the 8B/32k-feature scale.
     """
-    X = np.asarray(activations, dtype=np.float32)
+    dev = torch.device(device) if device is not None else torch.device("cpu")
+    X = torch.as_tensor(activations, dtype=torch.float32, device=dev)
     X_c = X - X.mean(0)
-    total_ss = (X_c ** 2).sum()
+    total_ss = (X_c ** 2).sum().item()
     if total_ss < 1e-10:
         return np.array([], dtype=int), np.array([]), 0
 
-    Z = np.asarray(codes, dtype=np.float32)
-    decoder = get_decoder(sae)
+    Z = torch.as_tensor(codes, dtype=torch.float32, device=dev)
+    decoder = get_decoder(sae)  # CPU numpy by convention
 
-    candidates = np.where((Z > 0).any(0))[0]
-    if len(candidates) == 0:
+    # Candidate features = those that ever fire positively on the manifold.
+    candidates_t = torch.nonzero((Z > 0).any(0), as_tuple=False).flatten()
+    if candidates_t.numel() == 0:
         return np.array([], dtype=int), np.array([]), 0
+    candidates = candidates_t.cpu().numpy()  # for the global-index return
 
-    Z_c = Z[:, candidates] - Z[:, candidates].mean(0)
-    D_cand = decoder[candidates]
-    n_cand = len(candidates)
+    Z_cand = Z[:, candidates_t]
+    Z_c = Z_cand - Z_cand.mean(0)
+    D_cand = torch.as_tensor(decoder[candidates], dtype=torch.float32, device=dev)
+    n_cand = candidates_t.numel()
     z_c_sq = (Z_c ** 2).sum(0)
     d_sq = (D_cand ** 2).sum(1)
     contrib_ss = z_c_sq * d_sq
 
     selected, selected_local, var_curve = [], [], []
-    residual = X_c.copy()
-    alive = np.ones(n_cand, dtype=bool)
+    residual = X_c.clone()
+    alive = torch.ones(n_cand, dtype=torch.bool, device=dev)
+    neg_inf = float("-inf")
 
     for _ in range(max_k):
         cross = (residual @ D_cand.T) * Z_c
         scores = 2 * cross.sum(0) - contrib_ss
-        scores[~alive] = -np.inf
-        best_local = int(np.argmax(scores))
-        if scores[best_local] <= 0:
+        scores = torch.where(alive, scores, torch.full_like(scores, neg_inf))
+        best_local = int(torch.argmax(scores).item())
+        if scores[best_local].item() <= 0:
             break
         selected_local.append(best_local)
         selected.append(int(candidates[best_local]))
         alive[best_local] = False
-        S_local = np.array(selected_local)
+        S_local = torch.tensor(selected_local, dtype=torch.long, device=dev)
         recon = Z_c[:, S_local] @ D_cand[S_local]
         residual = X_c - recon
-        explained = 1.0 - (residual ** 2).sum() / total_ss
+        explained = 1.0 - (residual ** 2).sum().item() / total_ss
         var_curve.append(float(explained))
         if explained >= var_threshold:
             break
@@ -210,11 +224,11 @@ def plot_greedy_variance_curves(sae_path, manifolds=None, max_k=64,
 
         print(f"  {manifold}: geometric reconstruction (decoder directions)...")
         _, vc_dir, _ = find_support_greedy(
-            acts_np, decoder, max_k=max_k, var_threshold=1.0)
+            acts_np, decoder, max_k=max_k, var_threshold=1.0, device=DEVICE)
 
         print(f"  {manifold}: statistical reconstruction (SAE codes)...")
         _, vc_codes, _ = find_support_greedy_codes(
-            acts_np, sae, codes, max_k=max_k, var_threshold=1.0)
+            acts_np, sae, codes, max_k=max_k, var_threshold=1.0, device=DEVICE)
 
         d = X_c.shape[1]
         n_seeds = 5
@@ -226,7 +240,7 @@ def plot_greedy_variance_curves(sae_path, manifolds=None, max_k=64,
             rng = np.random.default_rng(seed)
             Q, _ = np.linalg.qr(rng.standard_normal((d, d)).astype(np.float32))
             _, vc_r, _ = find_support_greedy(
-                acts_np, Q, max_k=max_k, var_threshold=1.0)
+                acts_np, Q, max_k=max_k, var_threshold=1.0, device=DEVICE)
             vc_orth_list.append(vc_r[:k_max])
 
         print(f"  {manifold}: random overcomplete baseline...")
@@ -236,7 +250,7 @@ def plot_greedy_variance_curves(sae_path, manifolds=None, max_k=64,
             R = rng.standard_normal((n_atoms, d)).astype(np.float32)
             R /= np.linalg.norm(R, axis=1, keepdims=True)
             _, vc_r, _ = find_support_greedy(
-                acts_np, R, max_k=max_k, var_threshold=1.0)
+                acts_np, R, max_k=max_k, var_threshold=1.0, device=DEVICE)
             vc_over_list.append(vc_r[:k_max])
 
         def _avg_curves(curves):
@@ -385,7 +399,8 @@ def plot_tuning_curves(sae_path, manifolds=None, n_features=10, sigma=3,
 
         print(f"  {manifold}: finding top {n_features} features...")
         sel_codes, _, _ = find_support_greedy_codes(
-            acts_np, sae, codes, max_k=n_features, var_threshold=1.0)
+            acts_np, sae, codes, max_k=n_features, var_threshold=1.0,
+            device=DEVICE)
         top_feats = sel_codes[:n_features]
         n_top = len(top_feats)
 

@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import torch
 
-from data import CACHE_DIR
+from data import CACHE_DIR, DEVICE
 from factored_sae import FactoredSAE
 from fair_comparison import (load_split, factored_eval, label_score, _ms,
                              _pca_basis, _subspace_rep, CYCLIC_LABEL)
@@ -58,14 +58,16 @@ def train_factored_iso(Xtr_mix, coord_dim, lam_iso, seed, n_charts=12,
     torch.manual_seed(seed); np.random.seed(seed)
     mean = Xtr_mix.mean(0, keepdims=True)
     std = float(Xtr_mix.std()) + 1e-6
-    Xn = torch.from_numpy((Xtr_mix - mean) / std)
+    Xn = torch.from_numpy((Xtr_mix - mean) / std).to(DEVICE)
     N, d_in = Xn.shape
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False)
+    # Construct on CPU (preserves the init RNG stream) then move to DEVICE, so
+    # GPU runs are numerically equivalent to the original CPU run, just faster.
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
 
     for ep in range(epochs):
-        perm = torch.randperm(N)
+        perm = torch.randperm(N).to(DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
             recon, a, coords = model(xb)          # coords [B, M, cd], a [B, M]
@@ -81,7 +83,7 @@ def train_factored_iso(Xtr_mix, coord_dim, lam_iso, seed, n_charts=12,
                 # target (Gropp et al.): ||J u|| = iso_target for every point and
                 # direction => isometry.  A fixed (not free) target is what stops
                 # the trivial collapse z->const that a variance-only penalty allows.
-                u = torch.randn(coord_dim); u = u / (u.norm() + 1e-8)
+                u = torch.randn(coord_dim); u = (u / (u.norm() + 1e-8)).to(DEVICE)
                 r0 = torch.stack([model.charts[m](coords[:, m])
                                   for m in range(n_charts)], dim=1)
                 rp = torch.stack([model.charts[m](coords[:, m] + fd_eps * u)
@@ -93,6 +95,7 @@ def train_factored_iso(Xtr_mix, coord_dim, lam_iso, seed, n_charts=12,
 
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
+    model.to("cpu")   # factored_eval builds CPU tensors and calls .numpy()
     return model, (mean.astype(np.float32), std)
 
 

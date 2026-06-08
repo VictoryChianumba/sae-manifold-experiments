@@ -71,6 +71,20 @@ license:
 export HF_TOKEN=hf_xxx        # or: huggingface-cli login
 ```
 
+> **Figure-set provenance (2026-06-08 regen).** The committed Llama-8B figures under
+> `cache/meta-llama-3.1-8b_L16/` were regenerated end-to-end on an A100 after the
+> original pod was recycled, using the ungated **`NousResearch/Meta-Llama-3.1-8B`**
+> mirror (identical base weights; the account lacked access to the gated `meta-llama`
+> repo). Equivalence was verified before trusting any figure: PCA-only metrics
+> reproduce the committed numbers to **Δ=0** (bit-identical activations) and the
+> legible/iso/adaptive `r2lin` headline metrics reproduce **exactly** (Δ=0.000),
+> seed-matched. The background SAE is a faithful retrain (same config/data/seed,
+> VE≈0.81), so all SAE-dependent figures (subspace, manifold_viz) come from that one
+> verified SAE and are mutually consistent. The committed 10-seed `results.json`
+> files were **not** overwritten. To regenerate, set
+> `SAE_MODEL_NAME=NousResearch/Meta-Llama-3.1-8B` and run
+> `prototype/regen_llama_figures.sh` on the pod.
+
 ## 3. Env vars (the only thing that differs from the laptop)
 
 ```bash

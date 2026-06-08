@@ -49,6 +49,54 @@ def _labels_array(labels, key):
         return np.array([idx[str(v)] for v in vals]), False
 
 
+# A concept's *defining* structure can sit in low-variance PCs, so a top-3-by-
+# variance projection hides it. Empirically (Llama-3.1-8B L16): the years helix's
+# decade cycle lives in PC4/PC5 while PC1 holds only the linear century trend, so
+# the top-3 plot shows a smear, not a helix; colours' hue circle, by contrast, is
+# in the top PCs at 8B but buried in PC8 at 135M. We therefore pick which 3 PCs to
+# display by how well they track the concept (cyclic-aware), not by raw variance.
+# These (label_key, period) pairs name cyclic components used ONLY for PC
+# selection — they never alter the data or the colouring.
+CYCLIC_COMPONENTS = {
+    "colors": [("hue", 1.0)],                       # hue wraps with period 1
+    "years":  [("year", 100.0), ("year", 10.0)],    # century + decade cycles -> helix
+    "days":   [("day_idx", 7.0)],                   # day-of-week wraps with period 7
+}
+
+
+def _abscorr(a, b):
+    a = a - a.mean(); b = b - b.mean()
+    d = np.linalg.norm(a) * np.linalg.norm(b)
+    return 0.0 if d < 1e-12 else abs(float(a @ b / d))
+
+
+def _concept_targets(labels, color_key, manifold):
+    """Label-derived target vectors used to score how 'concept-bearing' a PC is:
+    the standardised primary label plus cos/sin of any configured cyclic component."""
+    targets = []
+    if color_key:
+        vals, numeric = _labels_array(labels, color_key)
+        if numeric and np.std(vals) > 0:
+            targets.append((vals - vals.mean()) / (vals.std() + 1e-9))
+    for key, period in CYCLIC_COMPONENTS.get(manifold, []):
+        v, numeric = _labels_array(labels, key)
+        if numeric:
+            th = 2 * np.pi * v / period
+            targets.append(np.cos(th)); targets.append(np.sin(th))
+    return targets
+
+
+def _select_concept_pcs(P_all, targets, k=3):
+    """Pick the k PCs (from the candidate pool) most correlated with any concept
+    target. Falls back to the top-k by variance when no numeric target exists.
+    Returns indices into ``P_all``'s columns, ordered best-first."""
+    n_pc = P_all.shape[1]
+    if not targets or n_pc <= k:
+        return list(range(min(k, n_pc)))
+    score = [max(_abscorr(P_all[:, i], t) for t in targets) for i in range(n_pc)]
+    return sorted(range(n_pc), key=lambda i: score[i], reverse=True)[:k]
+
+
 def viz_manifold(manifold, sae=None, overlay_features=0, k=None,
                  color_key=None, point_size=14):
     data = load_manifold_data(manifold)
@@ -64,11 +112,19 @@ def viz_manifold(manifold, sae=None, overlay_features=0, k=None,
                     if isinstance(labels[0][k_], (int, float))), None)
     cvals, numeric = _labels_array(labels, key) if key else (None, True)
 
-    # PCA activations -> 3D.
+    # PCA to a candidate pool, then pick the 3 PCs that best track the concept
+    # (cyclic-aware) rather than the top-3 by variance — the concept can live in
+    # low-variance PCs (years' decade cycle is PC4/PC5 at 8B). See
+    # _select_concept_pcs; with no numeric label it falls back to top-3.
     Xc = X - X.mean(0)
-    coords = PCA(n_components=3).fit(Xc)
-    P = coords.transform(Xc)
-    var = coords.explained_variance_ratio_ * 100
+    n_pool = min(10, *Xc.shape)
+    pca = PCA(n_components=n_pool).fit(Xc)
+    P_all = pca.transform(Xc)
+    targets = _concept_targets(labels, key, manifold)
+    sel = _select_concept_pcs(P_all, targets, k=3)
+    P = P_all[:, sel]
+    var = pca.explained_variance_ratio_[sel] * 100
+    pc_label = "/".join(f"PC{i + 1}" for i in sel)
 
     fig = plt.figure(figsize=(7, 6))
     ax = fig.add_subplot(111, projection="3d")
@@ -89,22 +145,24 @@ def viz_manifold(manifold, sae=None, overlay_features=0, k=None,
         from saes import encode_sae, get_decoder
         from subspace_capture import find_support_greedy_codes
         codes = encode_sae(sae, data["activations"])
-        sel, _, _ = find_support_greedy_codes(
+        sel_feats, _, _ = find_support_greedy_codes(
             X, sae, codes, max_k=overlay_features, var_threshold=1.0)
         dec = get_decoder(sae)
         scale = 0.9 * np.abs(P).max()
-        for fid in sel[:overlay_features]:
-            # Project the decoder direction onto the 3 PCA axes.
-            d3 = coords.components_ @ dec[fid]
+        for fid in sel_feats[:overlay_features]:
+            # Project the decoder direction onto the 3 *selected* concept PCs and
+            # draw it as a single ray from the centroid (not a symmetric chord,
+            # which read as meaningless clutter in earlier versions).
+            d3 = pca.components_[sel] @ dec[fid]
             d3 = d3 / (np.linalg.norm(d3) + 1e-8) * scale
-            ax.plot([-d3[0], d3[0]], [-d3[1], d3[1]], [-d3[2], d3[2]],
-                    color="0.25", lw=1.3, alpha=0.7)
+            ax.plot([0, d3[0]], [0, d3[1]], [0, d3[2]],
+                    color="0.4", lw=1.0, alpha=0.5)
 
     if key and cvals is not None:
         cb = fig.colorbar(sc, ax=ax, shrink=0.5, pad=0.02)
         cb.set_label(key.replace("_", " "))
-    ax.set_title(f"{manifold.capitalize()} manifold — Llama-style PCA-3D\n"
-                 f"(PC variance {var[0]:.0f}/{var[1]:.0f}/{var[2]:.0f}%)",
+    ax.set_title(f"{manifold.capitalize()} manifold — concept PCs {pc_label}\n"
+                 f"(variance {var[0]:.0f}/{var[1]:.0f}/{var[2]:.0f}%)",
                  fontsize=10)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.grid(False)
@@ -117,7 +175,7 @@ def viz_manifold(manifold, sae=None, overlay_features=0, k=None,
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  {manifold}: saved {out}  (colored by '{key}', "
-          f"3 PCs explain {var.sum():.0f}% var)")
+          f"concept PCs {pc_label}, {var.sum():.0f}% var)")
 
 
 def main():

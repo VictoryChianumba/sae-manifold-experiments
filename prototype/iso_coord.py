@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from data import CACHE_DIR, DEVICE
 from factored_sae import FactoredSAE
@@ -62,7 +63,14 @@ def train_factored_iso(Xtr_mix, coord_dim, lam_iso, seed, n_charts=12,
     N, d_in = Xn.shape
     # Construct on CPU (preserves the init RNG stream) then move to DEVICE, so
     # GPU runs are numerically equivalent to the original CPU run, just faster.
-    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False).to(DEVICE)
+    # hard_routing=True: train as a true atlas (single-chart recon per point) so
+    # factored_eval's dominant-chart restriction matches the training regime.
+    # Without it the model trains a soft K-chart mixture but is scored on one
+    # chart only — the same confound the rest of the atlas suite was migrated to
+    # fix (see fair_comparison.train_factored); leaving it off makes geography VE
+    # collapse to ~0 / negative under the dominant-chart eval.
+    model = FactoredSAE(d_in, n_charts, coord_dim, linear_charts=False,
+                        hard_routing=True).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     eps = 1e-9
 
@@ -70,10 +78,13 @@ def train_factored_iso(Xtr_mix, coord_dim, lam_iso, seed, n_charts=12,
         perm = torch.randperm(N).to(DEVICE)
         for i in range(0, N, batch):
             xb = Xn[perm[i:i + batch]]
-            recon, a, coords = model(xb)          # coords [B, M, cd], a [B, M]
+            recon, a, coords = model(xb)          # a is one-hot (hard routing)
             mse = ((recon - xb) ** 2).sum(-1).mean()
-            ent_point = -(a * (a + eps).log()).sum(-1).mean()
-            usage = a.mean(0)
+            # Entropy regularizers need the *soft* routing — the one-hot `a` has
+            # entropy 0 and provides no gradient signal for the router params.
+            a_soft = F.softmax(model.router(xb), dim=-1)
+            ent_point = -(a_soft * (a_soft + eps).log()).sum(-1).mean()
+            usage = a_soft.mean(0)
             ent_usage = -(usage * (usage + eps).log()).sum()
             loss = mse + lam_sparse * ent_point - lam_balance * ent_usage
 

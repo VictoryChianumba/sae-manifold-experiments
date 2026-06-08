@@ -421,10 +421,22 @@ finite difference, router-weighted) so the coordinate becomes **arc-length**. Fo
 manifolds sampled uniformly in the underlying factor, arc length ≈ affine in the
 label, so it should decode linearly. No labels in training.
 
-**Result (3 seeds): it does not work.** The non-cyclic mean R² never exits seed noise
-(0.55 → 0.63 peak, then flat), the iso points never reach the PCA reference on *any*
-manifold, and any weight large enough to reshape the coordinate **destroys
-reconstruction** (VE 0.68 → 0.32 at lam=10, negative at 30).
+**Result (3 seeds, hard-routed — regenerated 2026-06-08): it does not work.** The
+non-cyclic mean R² never cleanly exits seed noise (0.61 at lam=0 → 0.70 peak at
+lam=3 → 0.60 by lam=30); no manifold shows a *sustained* crossing of its PCA
+reference (years marginally edges it at lam=3, 0.78 vs PCA 0.75, but within seed
+noise and not held at other weights), and any weight large enough to reshape the
+coordinate **destroys reconstruction** (held-out VE mean 0.45 → −0.43 at lam=10,
+−0.12 at 30; geography VE craters to −2.00).
+
+> **Numbers corrected 2026-06-08.** `iso_coord.py` was the one file in the atlas
+> suite never migrated to hard routing — it trained a soft K-chart mixture but was
+> scored on the dominant chart only (the confound the retraction banner describes).
+> It now uses `hard_routing=True` and both scales were re-run. The earlier draft's
+> figures (mean R² 0.55→0.63, VE 0.68→0.32) were soft-routed and are superseded by
+> the values above. The **verdict is unchanged** — isometry alone neither buys
+> legibility past PCA nor preserves fidelity — and is independently corroborated by
+> §8.2's hard-routed iso=1/pars=0 row.
 
 *Why:* **arc-length ≠ linear-in-coordinate.** A 3-D isometric coordinate can still
 *wind* through coordinate space; isometry is necessary but not sufficient for linear

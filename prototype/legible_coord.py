@@ -254,8 +254,8 @@ def _plot(manifolds, lams, ve, r2lin, pca_r2, cd):
         ax.set_title(m + cyc); ax.set_xlabel("held-out label R²")
         ax.grid(alpha=0.3); ax.legend(fontsize=7, loc="lower left")
     axes[0][0].set_ylabel(f"held-out VE@{cd}")
-    fig.suptitle("Fidelity ↔ legibility Pareto as label-alignment weight increases "
-                 "(labels = lam_label)")
+    fig.suptitle("Fidelity ↔ legibility trade-off as label-alignment weight increases "
+                 "(points connected in lam_label order — not a Pareto frontier)")
     fig.tight_layout()
     path = RESULTS_DIR / "pareto.png"
     fig.savefig(path, dpi=130, bbox_inches="tight")

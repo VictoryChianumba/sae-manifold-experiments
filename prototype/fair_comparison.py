@@ -520,7 +520,7 @@ def _ms(vals):
 def _report(manifolds, ve, lab, coord_dims, N, seeds):
     methods = ["pca", "sae_c4_geo", "sae_c4_stat", "sae_mix_geo", "sae_mix_stat",
                "factored_lin", "factored_nl"]
-    label = {"pca": "PCA (linear ceiling)", "sae_c4_geo": "SAE-C4 geometric",
+    label = {"pca": "PCA (linear optimum)", "sae_c4_geo": "SAE-C4 geometric",
              "sae_c4_stat": "SAE-C4 statistical", "sae_mix_geo": "SAE-mix geometric",
              "sae_mix_stat": "SAE-mix statistical",
              "factored_lin": "Factored LINEAR", "factored_nl": "Factored NONLINEAR"}
@@ -572,7 +572,7 @@ def _plot(manifolds, ve, maxN, coord_dims, seeds):
     ncol = len(names)
     fig, axes = plt.subplots(1, ncol, figsize=(4.2 * ncol, 4), squeeze=False)
     Ns = np.arange(1, maxN + 1)
-    line_methods = [("pca", "gray", "--", "PCA (ceiling)"),
+    line_methods = [("pca", "gray", "--", "PCA (linear optimum)"),
                     ("sae_c4_geo", "tab:blue", "-", "SAE-C4 geom"),
                     ("sae_mix_geo", "tab:cyan", "-", "SAE-mix geom"),
                     ("sae_mix_stat", "magenta", ":", "SAE-mix stat")]

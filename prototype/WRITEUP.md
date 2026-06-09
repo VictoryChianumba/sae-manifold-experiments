@@ -1,7 +1,7 @@
 # The story so far — goodfire SAE-manifold prototype
 
 *A narrative recap for our own reference (the digest companion to the detailed
-`../WRITEUP.md`). Reasoning-first: why each step, what we found, what it cost.*
+`internalaudit.md`). Reasoning-first: why each step, what we found, what it cost.*
 
 > **⚠️ Retraction (2026-05-29).** Question 1 ("fidelity") below was answered "yes"
 > on the strength of a `factored_eval` bug that scored the factored model's recon
@@ -12,7 +12,7 @@
 > claimed. Q2 (legibility) and Q3 (steering) are partially affected — Q3 is
 > unaffected at both 135M and 8B; Q2's supervised lift will shrink because the
 > hard-routed baseline is already higher (years 0.16 → 0.57 unsupervised). See
-> `../WRITEUP.md` retraction banner + `[[research-comparison-smell]]` memory.
+> `internalaudit.md` retraction banner + `[[research-comparison-smell]]` memory.
 > The narrative below is preserved for chronology; numbers should be re-derived
 > from `cache/fair_comparison/results.json` (current = hard-routed).
 
@@ -156,49 +156,58 @@ read `logit(" hot")−logit(" cold")`. **A clean causal handle at 135M** — the
 contrast moves monotonically *through* the cold→hot crossover (slope +0.231/α,
 range −1.33 → +0.04 across α∈[−3,+3], so the model's preferred token actually
 flips), while an equal-norm **random control** is flat (slope +0.018, ~13×
-weaker). At 135M the legible coordinate is a control handle. (§9b.7 below shows
-this does *not* fully carry to 8B — read this section as the 135M proof-of-
-concept, not a general result.)
+weaker). At 135M the legible coordinate is a control handle. (n=1, though — §9b.7's
+multi-seed 8B run later showed steering magnitude varies ~13× across seeds, so read
+this as one draw from a wide distribution, not a guaranteed effect size.)
 
 ## Part VIII — Real model (Llama-3.1-8B)
 
 The acid test for which of the small-model findings were real and which were
-artefacts. Run via `run_all.py` on RunPod A100, layer 16, 3 seeds. The headline
-fair-comparison VE-vs-N result (§9b.1) holds cleanly; the legibility /
-parsimony / steering legs need more care.
+artefacts. Run via `run_all.py` on RunPod A100, layer 16 — fair comparison at
+3 seeds, the legibility/parsimony legs re-run at **10 seeds** (2026-05-30) with
+per-row paired 2·SEM CIs, plus a multi-seed steering robustness pass.
 
 **Held up cleanly (§9b.1).** Curvature-beats-flat is now bulletproof —
 `factored-LIN` collapses to −0.02 mean VE@3 at 8B (vs +0.15 at 135M), so the
 factored-NL win is curvature, not parameter slack. Shattering ratio over PCA
-jumps ~9× → ~14×. **This is the one 8B result we lean on.**
+jumps ~9× → ~14×. This was the first 8B result solid enough to lean on; the
+10-seed re-run below added the legibility legs to that list.
 
 **Reframed framing-only (§9b.2 / §9b.6).** Part V was sold as "PCA can't read
 concepts so we need labels." At 8B, PCA's label R² is 0.86–0.99 across all
 five concepts — supervision becomes a *refinement* of an already-readable
 baseline, not a rescue. Mechanism unchanged; motivating gap smaller.
 
-**Reframed honestly — earlier draft overclaimed (§9b.3–5 + §9b.7).**
-The Pareto plots from `legible_coord`, `iso_parsimony`, and `adaptive_parsimony`
-at 8B sit inside narrow noise bands (label R² already saturated, factored
-VE@3 ranges 0.05–0.10 wide); 3 seeds is not enough to confidently distinguish
-"the lever moved" from "seed-luck." Row-by-row claims softened with a
-noise-floor caveat. The mechanical "gates close roughly uniformly" reading of
-adaptive parsimony survives; "scale doesn't fix legibility" needs more seeds.
+**Settled at 10 seeds (§9b.3–5) — the earlier "Pareto lives in a noise band"
+caveat is retracted.** The re-run with per-row paired 2·SEM CIs sharpens
+everything onto **geography**: supervision is a genuine *rescue* there
+(label R² 0.47 → 0.78 at λ=10, a ~30·SEM gap over PCA) while non-geography
+cells mostly sit inside the PCA band — refinement, not rescue. The bigger
+surprise: **the first clean *unsupervised* crossing of PCA at any scale** —
+isometry alone (iso=1, pars=0) hits 0.542 ± 0.024 vs PCA 0.472 ± 0.010 on
+geography, label-free. Adaptive gates pick up a second small unsupervised
+geography win (gate ∈ {2,8}) but robustly *hurt* colors at 2·SEM; the
+mechanical "gates close roughly uniformly" reading survives.
 
-**Steering re-run at 8B is modulation, not control (§9b.7).** Same recipe,
-one seed/manifold. Slope **+0.090/α**, strictly monotone, **~6× a flat random
-control** — but `logit(hot−cold)` stayed −1.31 → −0.79 across α∈[−3,+3], **never
-crossed zero**. At 135M the same recipe went −1.33 → +0.04 — actually flipping
-the model's preferred token. So the qualitative content of "the legible
-coordinate steers the model" is split by scale: control at 135M, modulation
-only at 8B. An earlier draft of this section read "qualitatively replicates";
-that was too charitable. Honest version: monotone causal effect above random,
-but no demonstrated behavioural switch at 8B.
+**Steering at 8B: the seed distribution is the story (§9b.7).** The earlier
+single-seed "modulation, not control at 8B" reading collapsed under the
+`steer22.py` robustness pass: 3 SAE seeds give slopes +0.022 / +0.090 /
++0.288 per α — all positive and sign-consistent, but a ~13× spread, and
+seed 2 **crosses zero at α=+4** (control, like 135M). So the "scale gap" was
+seed-luck; honest version: control sometimes, modulation usually. The
+cleanest causal result of the project came out of this pass: an
+**unaligned-axis baseline** (same architecture/routing, λ=0) is flat or
+wrong-sign (−0.031), so the legibility supervision is what *creates* the
+causal axis. fp32 ≡ bf16; the years contrast doesn't replicate (charts
+split, polysemous tokens) — single-target evidence.
 
-**Anchor pending.** Before leaning further on any of the 8B numbers we should
-replicate one Goodfire-paper figure at 8B (`subspace_capture.py` for Fig 4 /
-`manifold_viz.py` for Fig 1) as a sanity anchor — to confirm the pipeline
-produces the paper's numbers on the paper's model. Cheap; not yet run.
+**Anchor passed (§9b.8).** `subspace_capture.py` + `manifold_viz.py` on
+Llama-3.1-8B/L16 reproduce the paper's Fig 4 / Fig 1 shapes: stat-SAE
+plateaus at ~28% vs PCA's ~93% at k=64 on years (~14× shattering at N=3,
+vs ~9× at 135M — louder at scale), and the chronological helix-like loop
+shows in 3-D PCA. The pipeline produces the paper's numbers on the paper's
+model, so §9b's findings aren't pipeline artifacts. (Side cost: the greedy
+support search had to be ported to torch+CUDA to run at 32k-feature scale.)
 
 ---
 

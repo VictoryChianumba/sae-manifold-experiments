@@ -5,7 +5,7 @@ causal claim isn't a 135M-only proof-of-concept. **Cost target:** ≤ ~30 min,
 ≤ ~$2 on a single A100.
 
 **Read first:** `RUNPOD.md` (overall pod recipe), `NEXT_SESSION.md` (gotchas
-#1–#7 — all still apply), and the §9b.6 framing in `WRITEUP.md` so the
+#1–#7 — all still apply), and the §9b.6 framing in `internalaudit.md` so the
 result lands in the right narrative slot.
 
 ---
@@ -181,18 +181,18 @@ on the pod.
 
 On the Mac (no GPU):
 
-1. Add §9b.7 to `WRITEUP.md` — short subsection under Part VIII, mirroring
+1. Add §9b.7 to `internalaudit.md` — short subsection under Part VIII, mirroring
    the prose template in §9b.6 (1 paragraph of result + 1 of caveats).
    Cite slopes, ratio vs random, ||v||. Forward-pointer this to Part VII
    from `## 9. Part VII` so a sequential reader sees the 8B confirmation.
 2. Tick off "Steering (Part VII) was not re-run at 8B" in the §9b.6
    limitations bullet and update the §10 / §12 status lines.
-3. Update `prototype/STORY.md` with a Part VIII steering line.
+3. Update `prototype/WRITEUP.md` with a Part VIII steering line.
 4. Update the project memory (`goodfire-sae-manifold-repro`) — replace
    "What 8B left UN-TESTED" steering bullet with the 8B numbers.
 5. Commit on `prototype/factored-manifold-sae`:
    ```bash
-   git add WRITEUP.md prototype/STORY.md cache/meta-llama-3.1-8b_L16/steer/
+   git add prototype/WRITEUP.md cache/meta-llama-3.1-8b_L16/steer/
    git commit -m "Add §9b.7: causal steering reproduces at 8B (#13a)"
    ```
 

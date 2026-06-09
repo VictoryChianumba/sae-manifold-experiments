@@ -124,10 +124,10 @@ internally consistent. The 8B story now reads:
 
 1. **This file (`prototype/NEXT_SESSION.md`)** — state of the story + the
    honest-reframe correction.
-2. **`WRITEUP.md`** §9b.1 (the solid 8B headline), §9b.3 (the noise-floor
+2. **`internalaudit.md`** §9b.1 (the solid 8B headline), §9b.3 (the noise-floor
    caveat block — read it BEFORE §9b.3/4/5 themselves), §9b.7 (modulation-
    not-control). Then §10/§11/§12 for the patched status.
-3. **`prototype/STORY.md`** — the narrative arc, now including a Part VIII
+3. **`prototype/WRITEUP.md`** — the public narrative arc, now including a Part VIII
    that lead-foots the §9b.1 win and separately calls out what doesn't hold
    yet.
 4. **Project memory** (`goodfire-sae-manifold-repro`) — includes the
@@ -237,7 +237,7 @@ internally consistent. The 8B story now reads:
 - **Be honest about negative and reframing results.** Today's `acc148a` is the
   template: when the data doesn't support the claim, rewrite the claim — do
   not silently dilute the language.
-- After each task: update `WRITEUP.md` (and `STORY.md` if the arc changes),
+- After each task: update `internalaudit.md` (and `prototype/WRITEUP.md` if the public arc changes),
   update the project memory, and commit on the prototype branch.
 - **Before re-investing in a noisy 8B leg, anchor first** (task #20). The
   diagnostic cost of an anchor is ~$0.30; the diagnostic cost of more seeds
